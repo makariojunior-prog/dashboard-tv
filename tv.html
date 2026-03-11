@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboards — Cantina em Casa & Lumar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #090b0d;
+    --surface:  #0f1215;
+    --border:   #1a2030;
+    --accent:   #f5a623;
+    --accent2:  #2d8cf0;
+    --green:    #27c97a;
+    --text:     #cdd4e0;
+    --muted:    #4a5568;
+    --bar-h:    54px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    overflow: hidden;
+  }
+
+  /* ===== TOPBAR ===== */
+  #topbar {
+    position: fixed; top: 0; left: 0; right: 0;
+    height: var(--bar-h);
+    background: var(--surface);
+    border-bottom: 2px solid var(--border);
+    display: flex; align-items: center;
+    padding: 0 24px;
+    gap: 24px;
+    z-index: 100;
+  }
+
+  #logo {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 24px;
+    letter-spacing: 3px;
+    color: var(--accent);
+    white-space: nowrap;
+    line-height: 1;
+  }
+  #logo em {
+    color: var(--muted);
+    font-style: normal;
+    font-size: 12px;
+    letter-spacing: 2px;
+    display: block;
+    margin-top: -2px;
+  }
+
+  #divider { width: 1px; height: 28px; background: var(--border); flex-shrink: 0; }
+
+  /* tabs */
+  #tabs-nav {
+    display: flex; gap: 6px; flex: 1; overflow: hidden; align-items: center;
+  }
+
+  .tab-pill {
+    padding: 5px 16px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    background: transparent;
+    white-space: nowrap;
+    transition: all .35s ease;
+    cursor: default;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .tab-pill::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--accent);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform .35s ease;
+    z-index: -1;
+  }
+
+  .tab-pill.active {
+    color: #000;
+    border-color: var(--accent);
+    font-weight: 700;
+  }
+  .tab-pill.active::after { transform: scaleX(1); }
+
+  /* clock */
+  #clock-block {
+    display: flex; flex-direction: column; align-items: flex-end;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  #clock {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: 3px;
+    line-height: 1;
+  }
+  #datestr {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  /* ===== PROGRESS BAR ===== */
+  #prog-wrap {
+    position: fixed; top: var(--bar-h); left: 0; right: 0;
+    height: 3px; background: var(--border); z-index: 100;
+  }
+  #prog-bar {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--accent), #ffcf6e);
+    transition: width linear;
+    box-shadow: 0 0 8px var(--accent);
+  }
+
+  /* ===== IFRAMES ===== */
+  #frame-wrap {
+    position: fixed;
+    top: calc(var(--bar-h) + 3px); left: 0; right: 0; bottom: 0;
+    background: #fff;
+  }
+
+  .dash-frame {
+    position: absolute;
+    inset: 0; width: 100%; height: 100%;
+    border: none;
+    opacity: 0;
+    transition: opacity .7s ease;
+    pointer-events: none;
+    background: #fff;
+  }
+  .dash-frame.visible {
+    opacity: 1; pointer-events: auto;
+  }
+
+  /* ===== LOADING ===== */
+  #loader {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 14px; z-index: 50;
+    transition: opacity .6s;
+    background: var(--bg);
+    top: calc(var(--bar-h) + 3px);
+  }
+  .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loader p { font-size: 11px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; }
+
+  /* ===== LABEL INFERIOR ===== */
+  #dash-label {
+    position: fixed; bottom: 20px; left: 22px;
+    background: rgba(9,11,13,.88);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    padding: 7px 18px;
+    z-index: 100;
+    backdrop-filter: blur(8px);
+    transition: opacity .5s;
+  }
+  #dash-label strong {
+    font-size: 14px; font-weight: 600; display: block; color: #fff;
+  }
+  #dash-label span { font-size: 10px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+
+  /* ===== COUNTDOWN ===== */
+  #countdown {
+    position: fixed; bottom: 20px; right: 22px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 30px; font-weight: 700;
+    color: var(--accent); opacity: .65;
+    z-index: 100; letter-spacing: 2px;
+  }
+
+  /* ===== CONTROLES (hover) ===== */
+  #controls {
+    position: fixed; bottom: 72px; right: 22px;
+    display: flex; flex-direction: column; gap: 6px;
+    z-index: 100; opacity: 0;
+    transition: opacity .3s;
+  }
+  body:hover #controls { opacity: 1; }
+
+  .cbtn {
+    width: 40px; height: 40px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text); font-size: 17px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all .2s;
+  }
+  .cbtn:hover { background: var(--accent); color: #000; border-color: var(--accent); }
+
+  /* ===== STATUS DOT ===== */
+  #live-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+    animation: pulse 2s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  @keyframes pulse {
+    0%,100% { opacity: 1; box-shadow: 0 0 6px var(--green); }
+    50%      { opacity: .4; box-shadow: 0 0 2px var(--green); }
+  }
+  #live-label {
+    font-size: 10px; font-weight: 600;
+    color: var(--green); letter-spacing: 1.5px;
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<div id="topbar">
+  <div id="logo">
+    CANTINA EM CASA
+    <em>& LUMAR ALIMENTOS</em>
+  </div>
+  <div id="divider"></div>
+  <div id="tabs-nav"></div>
+  <div id="divider"></div>
+  <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+    <div id="live-dot"></div>
+    <div id="live-label">Ao vivo</div>
+  </div>
+  <div id="divider"></div>
+  <div id="clock-block">
+    <div id="clock">00:00:00</div>
+    <div id="datestr">—</div>
+  </div>
+</div>
+
+<!-- PROGRESS -->
+<div id="prog-wrap"><div id="prog-bar"></div></div>
+
+<!-- FRAMES -->
+<div id="frame-wrap"></div>
+
+<!-- LOADER -->
+<div id="loader">
+  <div class="spinner"></div>
+  <p>Carregando...</p>
+</div>
+
+<!-- LABEL -->
+<div id="dash-label">
+  <strong id="dname">—</strong>
+  <span id="dsub">Dashboard</span>
+</div>
+
+<!-- COUNTDOWN -->
+<div id="countdown" id="cdown">—</div>
+
+<!-- CONTROLES -->
+<div id="controls">
+  <button class="cbtn" onclick="go(-1)" title="Anterior">‹</button>
+  <button class="cbtn" id="btnp" onclick="togglePause()" title="Pausar">⏸</button>
+  <button class="cbtn" onclick="go(1)" title="Próximo">›</button>
+  <button class="cbtn" onclick="fs()" title="Tela cheia">⛶</button>
+</div>
+
+<script>
+/* ================================================================
+   CONFIGURAÇÃO DOS DASHBOARDS
+   
+   URL base da sua planilha publicada:
+   https://docs.google.com/spreadsheets/d/e/2PACX-1vSRpoC4lQVoIRDMdCPDLsAfBNghSaUT6-v2z7ODRCXCMfZ7_UAfM2sOK8PXQYjAxJDp1VaOW8d8npSy/pubhtml
+
+   Para cada aba, adicione &gid=NUMERO_DA_ABA ao final da URL.
+   O gid de cada aba aparece na URL da planilha quando você clica na aba:
+   ...spreadsheets/d/15ygrVoRh7.../edit#gid=XXXXXXXXX
+                                              ↑ este número
+   
+   ⚠️ ATENÇÃO: substitua os GIDs abaixo pelos números reais!
+   Os nomes das abas publicadas são: DASHBOARD, Dashboard-L, Dashboard-N, Dashboard-V
+================================================================ */
+
+const BASE = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSRpoC4lQVoIRDMdCPDLsAfBNghSaUT6-v2z7ODRCXCMfZ7_UAfM2sOK8PXQYjAxJDp1VaOW8d8npSy/pubhtml?widget=true&headers=false";
+
+const DASHBOARDS = [
+  {
+    nome:    "Dashboard Principal",
+    sub:     "Cantina em Casa",
+    gid:     "634922550",
+    duracao: 20
+  },
+  {
+    nome:    "Dashboard L",
+    sub:     "Lumar Alimentos",
+    gid:     "1159095364",
+    duracao: 15
+  },
+  {
+    nome:    "Dashboard N",
+    sub:     "Cantina + Lumar",
+    gid:     "1704662951",
+    duracao: 15
+  },
+  {
+    nome:    "Dashboard V",
+    sub:     "Cantina + Lumar",
+    gid:     "776833115",
+    duracao: 15
+  }
+];
+/* ================================================================ */
+
+// --- Monta DOM ---
+const wrap   = document.getElementById('frame-wrap');
+const tabNav = document.getElementById('tabs-nav');
+const frames = [];
+
+DASHBOARDS.forEach((d, i) => {
+  const url = BASE + "&gid=" + d.gid;
+
+  const f = document.createElement('iframe');
+  f.className = 'dash-frame';
+  f.src = url;
+  f.title = d.nome;
+  wrap.appendChild(f);
+  frames.push(f);
+
+  const pill = document.createElement('div');
+  pill.className = 'tab-pill';
+  pill.textContent = d.nome;
+  tabNav.appendChild(pill);
+});
+
+// --- Estado ---
+let cur    = 0;
+let paused = false;
+let tmr    = null;
+let cdi    = null;
+
+function showDash(idx) {
+  frames.forEach((f, i) => {
+    f.classList.toggle('visible', i === idx);
+    tabNav.children[i].classList.toggle('active', i === idx);
+  });
+  document.getElementById('dname').textContent = DASHBOARDS[idx].nome;
+  document.getElementById('dsub').textContent  = DASHBOARDS[idx].sub;
+  document.getElementById('loader').style.opacity = '0';
+  startTimer(DASHBOARDS[idx].duracao);
+}
+
+function startTimer(sec) {
+  clearTimeout(tmr);
+  clearInterval(cdi);
+
+  // barra de progresso
+  const bar = document.getElementById('prog-bar');
+  bar.style.transition = 'none';
+  bar.style.width = '0%';
+  void bar.offsetWidth;
+  bar.style.transition = `width ${sec}s linear`;
+  bar.style.width = '100%';
+
+  // countdown
+  let rem = sec;
+  document.getElementById('countdown').textContent = rem + 's';
+  cdi = setInterval(() => {
+    rem--;
+    document.getElementById('countdown').textContent = rem > 0 ? rem + 's' : '';
+    if (rem <= 0) clearInterval(cdi);
+  }, 1000);
+
+  if (!paused) tmr = setTimeout(() => { cur = (cur + 1) % DASHBOARDS.length; showDash(cur); }, sec * 1000);
+}
+
+function go(dir) {
+  cur = (cur + dir + DASHBOARDS.length) % DASHBOARDS.length;
+  showDash(cur);
+}
+
+function togglePause() {
+  paused = !paused;
+  document.getElementById('btnp').textContent = paused ? '▶' : '⏸';
+  if (!paused) showDash(cur);
+  else {
+    clearTimeout(tmr);
+    clearInterval(cdi);
+    const bar = document.getElementById('prog-bar');
+    const w = getComputedStyle(bar).width;
+    bar.style.transition = 'none';
+    bar.style.width = w;
+  }
+}
+
+function fs() {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+  else document.exitFullscreen();
+}
+
+// --- Relógio ---
+const DIAS  = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+function tick() {
+  const n = new Date();
+  document.getElementById('clock').textContent =
+    [n.getHours(), n.getMinutes(), n.getSeconds()].map(x => String(x).padStart(2,'0')).join(':');
+  document.getElementById('datestr').textContent =
+    `${DIAS[n.getDay()]}, ${n.getDate()} ${MESES[n.getMonth()]} ${n.getFullYear()}`;
+}
+setInterval(tick, 1000); tick();
+
+// --- Auto-refresh iframes não visíveis a cada 5 min ---
+setInterval(() => {
+  frames.forEach((f, i) => {
+    if (i !== cur) { const s = f.src; f.src = ''; setTimeout(() => f.src = s, 400); }
+  });
+}, 300000);
+
+// --- Inicia ---
+showDash(0);
+</script>
+</body>
+</html>
