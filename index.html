@@ -131,12 +131,102 @@
     border-radius: 50%;
     animation: spin 1s linear infinite;
   }
+
+  /* PIN screen */
+  #pin-screen {
+    position: fixed;
+    inset: 0;
+    background: #0f172a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    gap: 2rem;
+  }
+  #pin-screen.hidden { display: none; }
+  #pin-dots {
+    display: flex;
+    gap: 1rem;
+  }
+  .pin-dot {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    border: 2px solid #475569;
+    background: transparent;
+    transition: all 0.15s ease;
+  }
+  .pin-dot.filled {
+    background: #f97316;
+    border-color: #f97316;
+    box-shadow: 0 0 12px rgba(249,115,22,0.6);
+  }
+  #pin-error {
+    color: #ef4444;
+    font-size: 0.875rem;
+    font-weight: 600;
+    min-height: 1.25rem;
+    letter-spacing: 0.05em;
+  }
+  @keyframes shake {
+    0%,100% { transform: translateX(0); }
+    20%,60%  { transform: translateX(-10px); }
+    40%,80%  { transform: translateX(10px); }
+  }
+  .shake { animation: shake 0.4s ease; }
 </style>
 </head>
 <body class="dark">
 
+<!-- PIN SCREEN -->
+<div id="pin-screen">
+  <div class="text-center mb-4">
+    <div class="text-5xl mb-4">🔒</div>
+    <div class="text-3xl font-black text-white tracking-tight">Painel Comercial</div>
+    <div class="text-slate-400 text-sm mt-2 uppercase tracking-widest">Digite o PIN de acesso</div>
+  </div>
+  <div id="pin-dots" class="mb-2">
+    <div class="pin-dot" id="pd0"></div>
+    <div class="pin-dot" id="pd1"></div>
+    <div class="pin-dot" id="pd2"></div>
+    <div class="pin-dot" id="pd3"></div>
+  </div>
+  <div id="pin-error"></div>
+  <!-- Keypad -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.75rem;margin-top:1rem;">
+    <button class="pin-key" data-v="1">1</button>
+    <button class="pin-key" data-v="2">2</button>
+    <button class="pin-key" data-v="3">3</button>
+    <button class="pin-key" data-v="4">4</button>
+    <button class="pin-key" data-v="5">5</button>
+    <button class="pin-key" data-v="6">6</button>
+    <button class="pin-key" data-v="7">7</button>
+    <button class="pin-key" data-v="8">8</button>
+    <button class="pin-key" data-v="9">9</button>
+    <div></div>
+    <button class="pin-key" data-v="0">0</button>
+    <button class="pin-key" data-v="⌫" id="pin-back">⌫</button>
+  </div>
+</div>
+
+<style>
+  .pin-key {
+    width: 72px; height: 72px;
+    border-radius: 1rem;
+    background: #1e293b;
+    border: 1px solid rgba(255,255,255,0.07);
+    color: #f1f5f9;
+    font-size: 1.5rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .pin-key:active, .pin-key:hover { background: #334155; border-color: #f97316; color: #f97316; }
+</style>
+
 <!-- Root container -->
-<div class="relative w-screen h-screen flex flex-col z-10">
+<div id="main-app" class="relative w-screen h-screen flex flex-col z-10" style="display:none">
 
   <!-- HEADER -->
   <header class="flex items-center justify-between px-10 py-5 border-b border-slate-700/50 bg-slate-900/40 backdrop-blur">
@@ -185,6 +275,77 @@
 /* ============================================================
  * Comercial TV Dashboard — Cantina em Casa x Lumar
  * ============================================================ */
+
+/* ---------- PIN Gate ---------- */
+const PIN_CODE = '2610'; // Altere aqui para mudar o PIN
+
+(function initPin() {
+  const pinScreen = document.getElementById('pin-screen');
+  const mainApp   = document.getElementById('main-app');
+
+  // Já autenticado nesta sessão?
+  if (sessionStorage.getItem('tv_auth') === PIN_CODE) {
+    pinScreen.classList.add('hidden');
+    mainApp.style.removeProperty('display');
+    return;
+  }
+
+  let entered = '';
+
+  function updateDots() {
+    for (let i = 0; i < 4; i++) {
+      document.getElementById('pd' + i).classList.toggle('filled', i < entered.length);
+    }
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('pin-error');
+    el.textContent = msg;
+    const dots = document.getElementById('pin-dots');
+    dots.classList.add('shake');
+    setTimeout(() => dots.classList.remove('shake'), 450);
+  }
+
+  function tryUnlock() {
+    if (entered === PIN_CODE) {
+      sessionStorage.setItem('tv_auth', PIN_CODE);
+      pinScreen.classList.add('hidden');
+      mainApp.style.removeProperty('display');
+    } else {
+      showError('PIN incorreto. Tente novamente.');
+      entered = '';
+      updateDots();
+    }
+  }
+
+  document.querySelectorAll('.pin-key').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const v = btn.dataset.v;
+      if (v === '⌫') {
+        entered = entered.slice(0, -1);
+        document.getElementById('pin-error').textContent = '';
+      } else if (entered.length < 4) {
+        entered += v;
+        if (entered.length === 4) tryUnlock();
+      }
+      updateDots();
+    });
+  });
+
+  // Suporte ao teclado físico
+  document.addEventListener('keydown', (e) => {
+    if (pinScreen.classList.contains('hidden')) return;
+    if (e.key >= '0' && e.key <= '9' && entered.length < 4) {
+      entered += e.key;
+      if (entered.length === 4) tryUnlock();
+      updateDots();
+    } else if (e.key === 'Backspace') {
+      entered = entered.slice(0, -1);
+      document.getElementById('pin-error').textContent = '';
+      updateDots();
+    }
+  });
+})();
 
 const SUPABASE_URL = 'https://taicaxtjtikdajmhtsxc.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRhaWNheHRqdGlrZGFqbWh0c3hjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0MjgwNzcsImV4cCI6MjA5MzAwNDA3N30.G923g-1cmjrQZi7EoOcZcP1PieO9AKmk4mMMUgT4hbE';
