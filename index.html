@@ -273,14 +273,13 @@
     else if (e.key === 'Backspace') window._pin('DEL');
   });
 
-  // Sessão já autenticada?
+  // Sessão já autenticada? — apenas esconde pin-screen (main-app ainda não está no DOM)
   try {
     if (sessionStorage.getItem('tv_auth') === PIN) {
       var ps = document.getElementById('pin-screen');
-      var ma = document.getElementById('main-app');
       if (ps) ps.style.display = 'none';
-      if (ma) ma.style.removeProperty('display');
       window._pinAlreadyOk = true;
+      // main-app será mostrado por startDashboard() quando o main script rodar
     }
   } catch(e) {}
 })();
@@ -306,10 +305,10 @@
 </style>
 
 <!-- Root container -->
-<div id="main-app" class="relative w-screen h-screen flex flex-col z-10" style="display:none">
+<div id="main-app" class="relative z-10" style="display:none;flex-direction:column;width:100vw;height:100vh;position:relative;">
 
   <!-- HEADER -->
-  <header class="flex items-center justify-between px-10 py-5 border-b border-slate-700/50 bg-slate-900/40 backdrop-blur">
+  <header class="flex items-center justify-between px-10 py-5 border-b border-slate-700/50 bg-slate-900/40 backdrop-blur" style="flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:1.25rem 2.5rem;border-bottom:1px solid rgba(71,85,105,0.5);background:rgba(15,23,42,0.4);position:relative;">
     <!-- Brand -->
     <div class="flex items-center gap-4">
       <div class="relative w-12 h-12 rounded-xl bg-gradient-to-br from-brand to-brand-dark flex items-center justify-center shadow-lg shadow-brand/30">
@@ -340,13 +339,13 @@
   </header>
 
   <!-- MAIN slide area -->
-  <main class="flex-1 overflow-hidden relative">
-    <div id="slide-content" class="absolute inset-0 px-10 py-6 flex flex-col"></div>
+  <main class="flex-1 overflow-hidden relative" style="flex:1 1 0%;overflow:hidden;position:relative;min-height:0;">
+    <div id="slide-content" class="absolute inset-0 px-10 py-6 flex flex-col" style="position:absolute;top:0;right:0;bottom:0;left:0;padding:1.5rem 2.5rem;display:flex;flex-direction:column;"></div>
   </main>
 
   <!-- FOOTER (dots) -->
-  <footer class="flex items-center justify-center gap-3 py-5 border-t border-slate-700/50 bg-slate-900/40">
-    <div id="dots" class="flex items-center gap-3"></div>
+  <footer class="flex items-center justify-center gap-3 py-5 border-t border-slate-700/50 bg-slate-900/40" style="flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:0.75rem;padding:1.25rem;border-top:1px solid rgba(71,85,105,0.5);background:rgba(15,23,42,0.4);">
+    <div id="dots" class="flex items-center gap-3" style="display:flex;align-items:center;gap:0.75rem;"></div>
   </footer>
 
 </div>
@@ -796,18 +795,18 @@ async function fetchAll() {
 /* ---------- Render helpers ---------- */
 function renderLoading(message = 'Carregando dados…') {
   return `
-    <div class="flex-1 flex flex-col items-center justify-center text-slate-400">
-      <div class="spinner mb-6"></div>
-      <div class="text-lg">${escapeHtml(message)}</div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#94a3b8;">
+      <div class="spinner" style="margin-bottom:1.5rem;"></div>
+      <div style="font-size:1.125rem;">${escapeHtml(message)}</div>
     </div>`;
 }
 
 function renderError() {
   return `
-    <div class="flex-1 flex flex-col items-center justify-center text-slate-500">
-      <div class="text-6xl mb-4 opacity-50">📡</div>
-      <div class="text-2xl font-semibold text-slate-300 mb-1">Sem dados</div>
-      <div class="text-sm">Aguardando próxima atualização…</div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#64748b;">
+      <div style="font-size:3.75rem;margin-bottom:1rem;opacity:0.5;">📡</div>
+      <div style="font-size:1.5rem;font-weight:600;color:#cbd5e1;margin-bottom:0.25rem;">Sem dados</div>
+      <div style="font-size:0.875rem;">Aguardando próxima atualização…</div>
     </div>`;
 }
 
@@ -1539,6 +1538,10 @@ function init() {
 
 function bootstrap() {
   function startDashboard() {
+    var ps = document.getElementById('pin-screen');
+    var ma = document.getElementById('main-app');
+    if (ps) ps.style.display = 'none';
+    if (ma) { ma.style.display = 'flex'; ma.style.flexDirection = 'column'; }
     init();
     loadPinFromSupabase();
   }
