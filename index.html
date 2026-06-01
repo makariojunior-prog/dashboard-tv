@@ -294,22 +294,13 @@
  * Comercial TV Dashboard — Cantina em Casa x Lumar
  * ============================================================ */
 
-/* ---------- PIN Gate ---------- */
-let PIN_CODE = '2610'; // fallback enquanto carrega do Supabase
-
-async function loadPinFromSupabase() {
-  try {
-    const { data } = await db.from('crm_config').select('value').eq('key', 'tv_dashboard_pin').single();
-    if (data?.value) PIN_CODE = data.value;
-  } catch (_) { /* usa fallback */ }
-}
+/* ---------- PIN Gate — roda IMEDIATAMENTE, sem dependências ---------- */
+let PIN_CODE = '2610'; // fallback; atualizado do Supabase após bootstrap
+let _pinUnlockCb = null; // callback chamado quando PIN aceito
 
 function initPin() {
   const pinScreen = document.getElementById('pin-screen');
   const mainApp   = document.getElementById('main-app');
-
-  // Carrega PIN do Supabase em background — não bloqueia nada
-  loadPinFromSupabase();
 
   // Sessão já autenticada?
   if (sessionStorage.getItem('tv_auth') === PIN_CODE) {
@@ -339,6 +330,7 @@ function initPin() {
       sessionStorage.setItem('tv_auth', PIN_CODE);
       pinScreen.classList.add('hidden');
       mainApp.style.removeProperty('display');
+      if (typeof _pinUnlockCb === 'function') { _pinUnlockCb(); _pinUnlockCb = null; }
     } else {
       showError('PIN incorreto. Tente novamente.');
       entered = '';
@@ -378,10 +370,27 @@ function initPin() {
   return false;
 }
 
+// Inicializa PIN AGORA — antes de qualquer código que possa falhar
+const _pinReady = initPin();
+
+/* ---------- Supabase (protegido: falha silenciosa se CDN indisponível) ---------- */
 const SUPABASE_URL = 'https://taicaxtjtikdajmhtsxc.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRhaWNheHRqdGlrZGFqbWh0c3hjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0MjgwNzcsImV4cCI6MjA5MzAwNDA3N30.G923g-1cmjrQZi7EoOcZcP1PieO9AKmk4mMMUgT4hbE';
 
-const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+let db = null;
+try {
+  if (window.supabase) db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+} catch (e) {
+  console.error('[Dashboard] Supabase indisponível:', e);
+}
+
+async function loadPinFromSupabase() {
+  if (!db) return;
+  try {
+    const { data } = await db.from('crm_config').select('value').eq('key', 'tv_dashboard_pin').single();
+    if (data?.value) PIN_CODE = data.value;
+  } catch (_) { /* usa fallback */ }
+}
 
 const SLIDE_DURATION = 25_000;          // 25s
 const REFRESH_INTERVAL = 3 * 60 * 1000; // 3 min
@@ -1542,23 +1551,16 @@ function init() {
   });
 }
 
-async function bootstrap() {
-  await initPin();
-  // Se já autenticado, inicia o dashboard imediatamente;
-  // caso contrário, o botão de desbloqueio chama startDashboard()
-  const mainApp = document.getElementById('main-app');
-  if (mainApp.style.display !== 'none') {
+function bootstrap() {
+  function startDashboard() {
     init();
+    loadPinFromSupabase(); // atualiza PIN em background
+  }
+
+  if (_pinReady) {
+    startDashboard();
   } else {
-    // Sobrescreve tryUnlock para também iniciar o dashboard
-    const origStyle = mainApp.getAttribute('style');
-    const observer = new MutationObserver(() => {
-      if (!mainApp.style.display || mainApp.style.display === '') {
-        observer.disconnect();
-        init();
-      }
-    });
-    observer.observe(mainApp, { attributes: true, attributeFilter: ['style'] });
+    _pinUnlockCb = startDashboard;
   }
 }
 
