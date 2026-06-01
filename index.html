@@ -5,9 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Comercial TV - Cantina em Casa x Lumar</title>
 <link rel="icon" type="image/svg+xml" href="cantina-icon.svg">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
@@ -394,6 +391,28 @@ let _map = null;     // Leaflet map instance
 let _mapPollTimer = null;
 let _mapScreenActive = false;
 
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+    const s = document.createElement('script');
+    s.src = src; s.onload = resolve; s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+function loadCSS(href) {
+  if (document.querySelector(`link[href="${href}"]`)) return;
+  const l = document.createElement('link');
+  l.rel = 'stylesheet'; l.href = href;
+  document.head.appendChild(l);
+}
+async function loadMapDeps() {
+  loadCSS('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');
+  await Promise.all([
+    loadScript('https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'),
+    loadScript('https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js'),
+  ]);
+}
+
 async function vtLogin() {
   const ts = Date.now();
   const passHash = md5(VT_PASS);
@@ -442,6 +461,7 @@ async function loadMapScreen() {
   state.errors.rastreamento = false;
   renderCurrentSlide();
   try {
+    await loadMapDeps();
     const v = await fetchRastreamento();
     state.data.rastreamento = v;
     state.loading.rastreamento = false;
