@@ -706,11 +706,9 @@ async function fetchRotas() {
     .from('atacado_pedidos')
     .select('turno, entregador, cliente_nome, numero_pedido')
     .eq('data_entrega', today)
-    .not('turno', 'is', null)
-    .not('entregador', 'is', null)
-    .order('turno')
-    .order('entregador')
-    .order('cliente_nome');
+    .order('turno',        { nullsFirst: false })
+    .order('entregador',   { nullsFirst: false })
+    .order('cliente_nome', { nullsFirst: false });
   if (error) throw error;
   return (data || []).filter(r => r.ignorado !== true);
 }
@@ -1041,7 +1039,6 @@ function renderRotas() {
   const list = state.data.rotas || [];
   const diaLabel = ['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'][new Date().getDay()];
 
-  // Normalize turno string
   const normTurno = t => {
     const u = String(t || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     if (u === 'MANHA') return 'MANHÃ';
@@ -1050,21 +1047,27 @@ function renderRotas() {
     return null;
   };
 
-  // Group: turno → entregador → [clientes]
+  // Group: turno → entregador → [clientes]. Null turno/entregador → aDistribuir
   const turnos = { 'MANHÃ': {}, 'TARDE': {}, 'NOITE': {} };
+  const aDistribuir = [];
   let total = 0;
 
   for (const r of list) {
     const tk = normTurno(r.turno);
     const entregador = String(r.entregador || '').toUpperCase().trim();
     const cliente = String(r.cliente_nome || '').trim();
-    if (!tk || !entregador || !cliente) continue;
+    if (!cliente) continue;
+    total++;
+    if (!tk || !entregador) {
+      aDistribuir.push(cliente);
+      continue;
+    }
     if (!turnos[tk][entregador]) turnos[tk][entregador] = [];
     turnos[tk][entregador].push(cliente);
-    total++;
   }
 
   const hasNoite = Object.keys(turnos['NOITE']).length > 0;
+  const hasADist = aDistribuir.length > 0;
 
   const renderDriverCard = (entregador, clientes, color) => `
     <div class="rounded-xl p-3 mb-2 last:mb-0" style="background:${color}12;border:1px solid ${color}35;">
@@ -1102,7 +1105,27 @@ function renderRotas() {
     `;
   };
 
-  const gridClass = hasNoite ? 'grid-cols-3' : 'grid-cols-2';
+  const renderADistribuir = () => {
+    if (!hasADist) return '';
+    const pills = aDistribuir.map(c =>
+      `<div class="px-3 py-1.5 rounded-lg bg-slate-700/60 border border-slate-600/40 text-xs text-slate-300 truncate">${escapeHtml(c)}</div>`
+    ).join('');
+    return `
+      <div class="card p-4 relative mt-4" style="border-top:3px solid #e879f9;">
+        <div class="flex items-center gap-2 mb-3">
+          <div class="text-xl">📋</div>
+          <div>
+            <div class="text-base font-black uppercase tracking-wider text-fuchsia-400">A Distribuir</div>
+            <div class="text-xs text-slate-500 uppercase tracking-widest">${aDistribuir.length} entrega${aDistribuir.length !== 1 ? 's' : ''} sem entregador</div>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2 overflow-y-auto max-h-28">${pills}</div>
+      </div>
+    `;
+  };
+
+  const gridCols = hasNoite ? 'grid-cols-3' : 'grid-cols-2';
+  const gridFlex = hasADist ? '' : 'flex-1 min-h-0';
 
   return `
     <div class="flex items-end justify-between mb-4">
@@ -1115,10 +1138,13 @@ function renderRotas() {
         <div class="text-3xl font-black text-brand tabular-nums">${total}</div>
       </div>
     </div>
-    <div class="grid ${gridClass} gap-6 flex-1 min-h-0">
-      ${renderTurnoCol('MANHÃ', '🌅', '#f59e0b')}
-      ${renderTurnoCol('TARDE', '☀️', '#3b82f6')}
-      ${hasNoite ? renderTurnoCol('NOITE', '🌙', '#6366f1') : ''}
+    <div class="${hasADist ? 'flex flex-col flex-1 min-h-0 overflow-hidden'}">
+      <div class="grid ${gridCols} gap-6 ${hasADist ? 'flex-1 min-h-0' : 'flex-1 min-h-0'}">
+        ${renderTurnoCol('MANHÃ', '🌅', '#f59e0b')}
+        ${renderTurnoCol('TARDE', '☀️', '#3b82f6')}
+        ${hasNoite ? renderTurnoCol('NOITE', '🌙', '#6366f1') : ''}
+      </div>
+      ${renderADistribuir()}
     </div>
   `;
 }
