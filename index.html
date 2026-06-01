@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Comercial TV - Cantina em Casa x Lumar</title>
 <link rel="icon" type="image/svg+xml" href="cantina-icon.svg">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
@@ -175,6 +178,23 @@
     40%,80%  { transform: translateX(10px); }
   }
   .shake { animation: shake 0.4s ease; }
+
+  /* Leaflet dark overrides */
+  .leaflet-container { background: #0f172a; }
+  .leaflet-tile-pane { filter: brightness(0.85) saturate(0.9); }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+    background: #1e293b; color: #f1f5f9; border: 1px solid rgba(255,255,255,0.08); border-radius: 0.75rem;
+  }
+  .leaflet-tooltip {
+    background: #1e293b; color: #f1f5f9; border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 0.5rem; padding: 0.4rem 0.6rem; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .leaflet-tooltip-top::before { border-top-color: rgba(255,255,255,0.12); }
+  .leaflet-control-zoom a { background:#1e293b; color:#f1f5f9; border-color:rgba(255,255,255,0.1); }
+  .leaflet-control-zoom a:hover { background:#334155; }
+  .leaflet-control-attribution { background:rgba(15,23,42,0.7)!important; color:#64748b!important; }
+  .leaflet-control-attribution a { color:#94a3b8; }
+  #velo-map { border-radius: 1rem; }
 </style>
 </head>
 <body class="dark">
@@ -365,19 +385,147 @@ const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const SLIDE_DURATION = 25_000;          // 25s
 const REFRESH_INTERVAL = 3 * 60 * 1000; // 3 min
 
+/* ---------- Velotrack ---------- */
+const VT_BASE = 'https://track.velotrack.com.br/api/index.php';
+const VT_USER = 'integracao@gmail.com';
+const VT_PASS = '!Cantina26012019';
+let vtSess = null;   // { uid, browser, idcustomer }
+let _map = null;     // Leaflet map instance
+let _mapPollTimer = null;
+let _mapScreenActive = false;
+
+async function vtLogin() {
+  const ts = Date.now();
+  const passHash = md5(VT_PASS);
+  const uidHash  = md5(`${VT_USER}:${passHash}:${ts}`);
+  const ua = navigator.userAgent;
+  const res = await fetch(`${VT_BASE}/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ desc_uid: uidHash, desc_useragent: ua, desc_data: ts })
+  });
+  if (!res.ok) throw new Error(`VT login HTTP ${res.status}`);
+  const d = await res.json();
+  vtSess = { uid: d.desc_uid_retorno, browser: ua, idcustomer: d.idcustomer };
+  return vtSess;
+}
+
+async function fetchRastreamento() {
+  if (!vtSess) await vtLogin();
+  const res = await fetch(`${VT_BASE}/mobile/${vtSess.idcustomer}/positionv2`, {
+    headers: { uid: vtSess.uid, browser: vtSess.browser }
+  });
+  if (res.status === 401) { vtSess = null; await vtLogin(); return fetchRastreamento(); }
+  if (!res.ok) throw new Error(`VT positions HTTP ${res.status}`);
+  return await res.json();   // array of vehicles
+}
+
+function startMapPoll() {
+  if (_mapPollTimer) return;
+  _mapPollTimer = setInterval(async () => {
+    try {
+      const v = await fetchRastreamento();
+      state.data.rastreamento = v;
+      state.errors.rastreamento = false;
+      if (SCREENS[state.currentSlide]?.id === 'rastreamento') afterMapRender();
+    } catch (e) { console.warn('Map poll:', e); }
+  }, 30_000);
+}
+
+function stopMapPoll() {
+  if (_mapPollTimer) { clearInterval(_mapPollTimer); _mapPollTimer = null; }
+}
+
+async function loadMapScreen() {
+  if (state.loading.rastreamento) return;
+  state.loading.rastreamento = true;
+  state.errors.rastreamento = false;
+  renderCurrentSlide();
+  try {
+    const v = await fetchRastreamento();
+    state.data.rastreamento = v;
+    state.loading.rastreamento = false;
+  } catch (e) {
+    console.error('VT load:', e);
+    state.loading.rastreamento = false;
+    state.errors.rastreamento = true;
+  }
+  renderCurrentSlide();
+  startMapPoll();
+}
+
+function afterMapRender() {
+  const mapEl = document.getElementById('velo-map');
+  if (!mapEl) return;
+
+  const vehicles = Array.isArray(state.data.rastreamento) ? state.data.rastreamento : [];
+
+  if (_map) { _map.remove(); _map = null; }
+
+  _map = L.map('velo-map', { zoomControl: true, scrollWheelZoom: false });
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    subdomains: 'abcd', maxZoom: 19
+  }).addTo(_map);
+
+  const bounds = [];
+  for (const v of vehicles) {
+    const lat = parseFloat(v.latitude), lng = parseFloat(v.longitude);
+    if (!isFinite(lat) || !isFinite(lng)) continue;
+    bounds.push([lat, lng]);
+
+    const online = v.connected === true || v.connected === 'Sim';
+    const speed  = Number(v.speed) || 0;
+    const color  = online ? '#22c55e' : '#64748b';
+
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="background:${color};border:2px solid #fff;border-radius:50%;width:14px;height:14px;box-shadow:0 0 8px ${color}80;"></div>`,
+      iconSize: [14, 14], iconAnchor: [7, 7]
+    });
+
+    const placa = escapeHtml(v.vehicle_code || '—');
+    const nome  = escapeHtml(v.description  || '');
+    const moto  = escapeHtml(v.driver       || '');
+    const addr  = escapeHtml(v.address      || '');
+    const tip = `<b style="font-size:13px">${placa}</b>${nome ? ` · ${nome}` : ''}<br>
+      <span style="color:${color};font-weight:700">${online ? '🟢 Ligado' : '⚫ Desligado'}</span>
+      ${moto ? `<br>👤 ${moto}` : ''}
+      ${speed > 0 ? `<br>🚀 ${speed} km/h` : ''}
+      ${addr ? `<br><span style="color:#94a3b8;font-size:10px">${addr}</span>` : ''}`;
+
+    L.marker([lat, lng], { icon })
+     .bindTooltip(tip, { direction: 'top', opacity: 0.97, className: '' })
+     .addTo(_map);
+  }
+
+  if (bounds.length > 1) _map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+  else if (bounds.length === 1) _map.setView(bounds[0], 14);
+  else _map.setView([-16.6869, -49.2648], 12);  // Goiânia fallback
+
+  const now = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const onCnt = vehicles.filter(v => v.connected === true || v.connected === 'Sim').length;
+  const infoEl = document.getElementById('vt-count');
+  if (infoEl) infoEl.innerHTML =
+    `<span class="text-3xl font-black text-white">${vehicles.length}</span>
+     <span class="text-xs text-slate-500 block uppercase tracking-widest">veículo${vehicles.length !== 1 ? 's' : ''}</span>
+     <span class="text-xs text-slate-400 mt-1 block">${onCnt} ligado${onCnt !== 1 ? 's' : ''} · ${now}</span>`;
+}
+
 const SCREENS = [
   { id: 'pedidos', name: '📦 Resumo de Pedidos' },
   { id: 'agenda',  name: '📅 Agenda do Dia' },
   { id: 'rotas',   name: '📋 Romaneio do Dia' },
   { id: 'visitas', name: '👣 Equipe em Campo' },
-  { id: 'alertas', name: '⚠️ Alertas' },
+  { id: 'alertas',       name: '⚠️ Alertas' },
+  { id: 'rastreamento', name: '🗺️ Rastreamento' },
 ];
 
 const state = {
   currentSlide: 0,
-  data: { pedidos: null, agenda: null, rotas: null, visitas: null, alertas: null },
-  loading: { pedidos: true, agenda: true, rotas: true, visitas: true, alertas: true },
-  errors:  { pedidos: false, agenda: false, rotas: false, visitas: false, alertas: false },
+  data: { pedidos: null, agenda: null, rotas: null, visitas: null, alertas: null, rastreamento: null },
+  loading: { pedidos: true, agenda: true, rotas: true, visitas: true, alertas: true, rastreamento: false },
+  errors:  { pedidos: false, agenda: false, rotas: false, visitas: false, alertas: false, rastreamento: false },
   rotationTimer: null,
   clockTimer: null,
 };
@@ -1198,6 +1346,35 @@ function renderAlertas() {
   `;
 }
 
+/* ---------- Screen 6: Rastreamento ---------- */
+function renderRastreamento() {
+  if (state.loading.rastreamento) return renderLoading('Conectando ao Velotrack…');
+  if (state.errors.rastreamento && !state.data.rastreamento) {
+    return `
+      <div class="flex-1 flex flex-col items-center justify-center gap-4 text-center">
+        <div class="text-5xl">📡</div>
+        <div class="text-xl font-bold text-slate-300">Sem conexão com Velotrack</div>
+        <div class="text-sm text-slate-500 max-w-sm">Verifique se a API está acessível. Pode ser necessário um proxy por restrições de CORS.</div>
+      </div>`;
+  }
+  const vehicles = Array.isArray(state.data.rastreamento) ? state.data.rastreamento : [];
+  const onCnt = vehicles.filter(v => v.connected === true || v.connected === 'Sim').length;
+  return `
+    <div class="flex items-end justify-between mb-3">
+      <div>
+        <div class="text-xs uppercase tracking-[0.3em] text-slate-500 font-bold">Logística</div>
+        <div class="text-3xl font-bold text-white mt-1">Rastreamento · Ao Vivo</div>
+      </div>
+      <div id="vt-count" class="text-right">
+        <span class="text-3xl font-black text-white">${vehicles.length}</span>
+        <span class="text-xs text-slate-500 block uppercase tracking-widest">veículo${vehicles.length !== 1 ? 's' : ''}</span>
+        <span class="text-xs text-slate-400 mt-1 block">${onCnt} ligado${onCnt !== 1 ? 's' : ''}</span>
+      </div>
+    </div>
+    <div id="velo-map" class="flex-1 rounded-2xl overflow-hidden" style="min-height:0;"></div>
+  `;
+}
+
 /* ---------- Slide rendering ---------- */
 function renderCurrentSlide() {
   const screen = SCREENS[state.currentSlide];
@@ -1207,17 +1384,36 @@ function renderCurrentSlide() {
 
   let html = '';
   switch (screen.id) {
-    case 'pedidos': html = renderPedidos(); break;
-    case 'agenda':  html = renderAgenda(); break;
-    case 'rotas':   html = renderRotas(); break;
-    case 'visitas': html = renderVisitas(); break;
-    case 'alertas': html = renderAlertas(); break;
+    case 'pedidos':       html = renderPedidos(); break;
+    case 'agenda':        html = renderAgenda();  break;
+    case 'rotas':         html = renderRotas();   break;
+    case 'visitas':       html = renderVisitas(); break;
+    case 'alertas':       html = renderAlertas(); break;
+    case 'rastreamento':  html = renderRastreamento(); break;
   }
 
   content.innerHTML = html;
   screenName.textContent = screen.name;
   screenCurrent.textContent = state.currentSlide + 1;
   renderDots();
+
+  // Map lifecycle
+  const isMap = screen.id === 'rastreamento';
+  if (isMap) {
+    if (!_mapScreenActive) {
+      _mapScreenActive = true;
+      if (state.data.rastreamento === null && !state.loading.rastreamento && !state.errors.rastreamento) {
+        loadMapScreen(); return; // loadMapScreen will re-render when done
+      }
+    }
+    requestAnimationFrame(() => afterMapRender());
+  } else {
+    if (_mapScreenActive) {
+      _mapScreenActive = false;
+      stopMapPoll();
+      if (_map) { _map.remove(); _map = null; }
+    }
+  }
 }
 
 function renderDots() {
