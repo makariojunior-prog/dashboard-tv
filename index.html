@@ -305,17 +305,8 @@ async function loadPinFromSupabase() {
 }
 
 async function initPin() {
-  await loadPinFromSupabase();
-
   const pinScreen = document.getElementById('pin-screen');
   const mainApp   = document.getElementById('main-app');
-
-  // Já autenticado nesta sessão?
-  if (sessionStorage.getItem('tv_auth') === PIN_CODE) {
-    pinScreen.classList.add('hidden');
-    mainApp.style.removeProperty('display');
-    return;
-  }
 
   let entered = '';
 
@@ -345,6 +336,7 @@ async function initPin() {
     }
   }
 
+  // Anexa listeners ANTES de qualquer await para garantir responsividade
   document.querySelectorAll('.pin-key').forEach(btn => {
     btn.addEventListener('click', () => {
       const v = btn.dataset.v;
@@ -359,7 +351,6 @@ async function initPin() {
     });
   });
 
-  // Suporte ao teclado físico
   document.addEventListener('keydown', (e) => {
     if (pinScreen.classList.contains('hidden')) return;
     if (e.key >= '0' && e.key <= '9' && entered.length < 4) {
@@ -372,6 +363,18 @@ async function initPin() {
       updateDots();
     }
   });
+
+  // Carrega PIN do Supabase com timeout de 4s; se demorar usa fallback '2610'
+  await Promise.race([
+    loadPinFromSupabase(),
+    new Promise(resolve => setTimeout(resolve, 4000))
+  ]);
+
+  // Verifica sessão válida após ter o PIN correto
+  if (sessionStorage.getItem('tv_auth') === PIN_CODE) {
+    pinScreen.classList.add('hidden');
+    mainApp.style.removeProperty('display');
+  }
 }
 
 const SUPABASE_URL = 'https://taicaxtjtikdajmhtsxc.supabase.co';
