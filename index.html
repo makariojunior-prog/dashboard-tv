@@ -304,24 +304,34 @@ async function loadPinFromSupabase() {
   } catch (_) { /* usa fallback */ }
 }
 
-async function initPin() {
+function initPin() {
   const pinScreen = document.getElementById('pin-screen');
   const mainApp   = document.getElementById('main-app');
+
+  // Carrega PIN do Supabase em background — não bloqueia nada
+  loadPinFromSupabase();
+
+  // Sessão já autenticada?
+  if (sessionStorage.getItem('tv_auth') === PIN_CODE) {
+    pinScreen.classList.add('hidden');
+    mainApp.style.removeProperty('display');
+    return true;
+  }
 
   let entered = '';
 
   function updateDots() {
     for (let i = 0; i < 4; i++) {
-      document.getElementById('pd' + i).classList.toggle('filled', i < entered.length);
+      const dot = document.getElementById('pd' + i);
+      if (dot) dot.classList.toggle('filled', i < entered.length);
     }
   }
 
   function showError(msg) {
     const el = document.getElementById('pin-error');
-    el.textContent = msg;
+    if (el) el.textContent = msg;
     const dots = document.getElementById('pin-dots');
-    dots.classList.add('shake');
-    setTimeout(() => dots.classList.remove('shake'), 450);
+    if (dots) { dots.classList.add('shake'); setTimeout(() => dots.classList.remove('shake'), 450); }
   }
 
   function tryUnlock() {
@@ -336,13 +346,13 @@ async function initPin() {
     }
   }
 
-  // Anexa listeners ANTES de qualquer await para garantir responsividade
   document.querySelectorAll('.pin-key').forEach(btn => {
     btn.addEventListener('click', () => {
       const v = btn.dataset.v;
       if (v === '⌫') {
         entered = entered.slice(0, -1);
-        document.getElementById('pin-error').textContent = '';
+        const el = document.getElementById('pin-error');
+        if (el) el.textContent = '';
       } else if (entered.length < 4) {
         entered += v;
         if (entered.length === 4) tryUnlock();
@@ -359,22 +369,13 @@ async function initPin() {
       updateDots();
     } else if (e.key === 'Backspace') {
       entered = entered.slice(0, -1);
-      document.getElementById('pin-error').textContent = '';
+      const el = document.getElementById('pin-error');
+      if (el) el.textContent = '';
       updateDots();
     }
   });
 
-  // Carrega PIN do Supabase com timeout de 4s; se demorar usa fallback '2610'
-  await Promise.race([
-    loadPinFromSupabase(),
-    new Promise(resolve => setTimeout(resolve, 4000))
-  ]);
-
-  // Verifica sessão válida após ter o PIN correto
-  if (sessionStorage.getItem('tv_auth') === PIN_CODE) {
-    pinScreen.classList.add('hidden');
-    mainApp.style.removeProperty('display');
-  }
+  return false;
 }
 
 const SUPABASE_URL = 'https://taicaxtjtikdajmhtsxc.supabase.co';
