@@ -277,9 +277,18 @@
  * ============================================================ */
 
 /* ---------- PIN Gate ---------- */
-const PIN_CODE = '2610'; // Altere aqui para mudar o PIN
+let PIN_CODE = '2610'; // fallback enquanto carrega do Supabase
 
-(function initPin() {
+async function loadPinFromSupabase() {
+  try {
+    const { data } = await db.from('crm_config').select('value').eq('key', 'tv_dashboard_pin').single();
+    if (data?.value) PIN_CODE = data.value;
+  } catch (_) { /* usa fallback */ }
+}
+
+async function initPin() {
+  await loadPinFromSupabase();
+
   const pinScreen = document.getElementById('pin-screen');
   const mainApp   = document.getElementById('main-app');
 
@@ -345,7 +354,7 @@ const PIN_CODE = '2610'; // Altere aqui para mudar o PIN
       updateDots();
     }
   });
-})();
+}
 
 const SUPABASE_URL = 'https://taicaxtjtikdajmhtsxc.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRhaWNheHRqdGlrZGFqbWh0c3hjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0MjgwNzcsImV4cCI6MjA5MzAwNDA3N30.G923g-1cmjrQZi7EoOcZcP1PieO9AKmk4mMMUgT4hbE';
@@ -1112,10 +1121,30 @@ function init() {
   });
 }
 
+async function bootstrap() {
+  await initPin();
+  // Se já autenticado, inicia o dashboard imediatamente;
+  // caso contrário, o botão de desbloqueio chama startDashboard()
+  const mainApp = document.getElementById('main-app');
+  if (mainApp.style.display !== 'none') {
+    init();
+  } else {
+    // Sobrescreve tryUnlock para também iniciar o dashboard
+    const origStyle = mainApp.getAttribute('style');
+    const observer = new MutationObserver(() => {
+      if (!mainApp.style.display || mainApp.style.display === '') {
+        observer.disconnect();
+        init();
+      }
+    });
+    observer.observe(mainApp, { attributes: true, attributeFilter: ['style'] });
+  }
+}
+
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
+  document.addEventListener('DOMContentLoaded', bootstrap);
 } else {
-  init();
+  bootstrap();
 }
 </script>
 </body>
