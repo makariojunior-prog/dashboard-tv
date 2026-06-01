@@ -196,6 +196,21 @@
 </head>
 <body class="dark">
 
+<!-- Debug: captura erros JS e mostra na tela -->
+<script>
+window.onerror = function(msg, src, line) {
+  var d = document.getElementById('_js_err');
+  if (!d) {
+    d = document.createElement('div');
+    d.id = '_js_err';
+    d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#dc2626;color:#fff;padding:12px 16px;font-size:13px;font-family:monospace;z-index:99999;white-space:pre-wrap;';
+    document.body.appendChild(d);
+  }
+  d.textContent = 'JS ERROR: ' + msg + '\n' + (src || '') + ':' + line;
+  return false;
+};
+</script>
+
 <!-- PIN SCREEN -->
 <div id="pin-screen">
   <div class="text-center mb-4">
@@ -355,6 +370,18 @@
  * Comercial TV Dashboard — Cantina em Casa x Lumar
  * ============================================================ */
 
+/* ---------- Polyfill Promise.allSettled (Chrome < 76) ---------- */
+if (!Promise.allSettled) {
+  Promise.allSettled = function(promises) {
+    return Promise.all(promises.map(function(p) {
+      return Promise.resolve(p).then(
+        function(value) { return { status: 'fulfilled', value: value }; },
+        function(reason) { return { status: 'rejected', reason: reason }; }
+      );
+    }));
+  };
+}
+
 /* ---------- PIN Gate — tratado pelo script inline acima do main-app ---------- */
 // _pin(), _pinOk, _pinAlreadyOk, _pinSetCode definidos no bloco inline
 
@@ -373,12 +400,12 @@ async function loadPinFromSupabase() {
   if (!db) return;
   try {
     const { data } = await db.from('crm_config').select('value').eq('key', 'tv_dashboard_pin').single();
-    if (data?.value && typeof window._pinSetCode === 'function') window._pinSetCode(data.value);
+    if (data && data.value && typeof window._pinSetCode === 'function') window._pinSetCode(data.value);
   } catch (_) { /* usa fallback */ }
 }
 
-const SLIDE_DURATION = 25_000;          // 25s
-const REFRESH_INTERVAL = 3 * 60 * 1000; // 3 min
+const SLIDE_DURATION = 25000;
+const REFRESH_INTERVAL = 3 * 60 * 1000;
 
 /* ---------- Velotrack ---------- */
 const VT_BASE = 'https://track.velotrack.com.br/api/index.php';
@@ -444,9 +471,10 @@ function startMapPoll() {
       const v = await fetchRastreamento();
       state.data.rastreamento = v;
       state.errors.rastreamento = false;
-      if (SCREENS[state.currentSlide]?.id === 'rastreamento') afterMapRender();
+      var cur = SCREENS[state.currentSlide];
+      if (cur && cur.id === 'rastreamento') afterMapRender();
     } catch (e) { console.warn('Map poll:', e); }
-  }, 30_000);
+  }, 30000);
 }
 
 function stopMapPoll() {
