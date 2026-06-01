@@ -368,7 +368,7 @@ const REFRESH_INTERVAL = 3 * 60 * 1000; // 3 min
 const SCREENS = [
   { id: 'pedidos', name: '📦 Resumo de Pedidos' },
   { id: 'agenda',  name: '📅 Agenda do Dia' },
-  { id: 'rotas',   name: '🚚 Rotas de Entrega' },
+  { id: 'rotas',   name: '📋 Romaneio do Dia' },
   { id: 'visitas', name: '👣 Equipe em Campo' },
   { id: 'alertas', name: '⚠️ Alertas' },
 ];
@@ -553,11 +553,18 @@ async function fetchAgenda() {
 }
 
 async function fetchRotas() {
-  const { data, error } = await db.from('crm_routes')
-    .select('id, name, schedule, days_of_week, is_active')
-    .eq('is_active', true);
+  const today = todayStr();
+  const { data, error } = await db
+    .from('atacado_pedidos')
+    .select('turno, entregador, cliente_nome, numero_pedido')
+    .eq('data_entrega', today)
+    .not('turno', 'is', null)
+    .not('entregador', 'is', null)
+    .order('turno')
+    .order('entregador')
+    .order('cliente_nome');
   if (error) throw error;
-  return data || [];
+  return (data || []).filter(r => r.ignorado !== true);
 }
 
 async function fetchVisitas() {
@@ -880,81 +887,90 @@ function renderAgenda() {
 
 /* ---------- Screen 3: Rotas ---------- */
 function renderRotas() {
-  if (state.loading.rotas) return renderLoading('Carregando rotas…');
+  if (state.loading.rotas) return renderLoading('Carregando romaneio…');
   if (state.errors.rotas) return renderError();
 
   const list = state.data.rotas || [];
-  const hoje = diaDaSemanaHoje();
-  // Capitalize: "Quinta-feira"
   const diaLabel = ['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'][new Date().getDay()];
 
-  const turnos = { 'MANHÃ': [], 'TARDE': [], 'NOITE': [] };
+  // Normalize turno string
+  const normTurno = t => {
+    const u = String(t || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    if (u === 'MANHA') return 'MANHÃ';
+    if (u === 'TARDE') return 'TARDE';
+    if (u === 'NOITE') return 'NOITE';
+    return null;
+  };
+
+  // Group: turno → entregador → [clientes]
+  const turnos = { 'MANHÃ': {}, 'TARDE': {}, 'NOITE': {} };
+  let total = 0;
 
   for (const r of list) {
-    const schedule = Array.isArray(r.schedule) ? r.schedule : [];
-    for (const entry of schedule) {
-      if (!entry) continue;
-      const dia = String(entry.dia || '').toUpperCase();
-      const turno = String(entry.turno || '').toUpperCase();
-      // Normalize MANHA/MANHÃ etc.
-      const turnoKey =
-        turno === 'MANHA' || turno === 'MANHÃ' ? 'MANHÃ' :
-        turno === 'TARDE' ? 'TARDE' :
-        turno === 'NOITE' ? 'NOITE' : null;
-      const diaKey = dia === 'TERCA' ? 'TERÇA' : dia === 'SABADO' ? 'SÁBADO' : dia;
-      if (diaKey === hoje && turnoKey) {
-        turnos[turnoKey].push(r.name);
-      }
-    }
+    const tk = normTurno(r.turno);
+    const entregador = String(r.entregador || '').toUpperCase().trim();
+    const cliente = String(r.cliente_nome || '').trim();
+    if (!tk || !entregador || !cliente) continue;
+    if (!turnos[tk][entregador]) turnos[tk][entregador] = [];
+    turnos[tk][entregador].push(cliente);
+    total++;
   }
 
-  // Dedup each turno
-  for (const k of Object.keys(turnos)) {
-    turnos[k] = [...new Set(turnos[k])].sort();
-  }
+  const hasNoite = Object.keys(turnos['NOITE']).length > 0;
 
-  const totalRotas = turnos['MANHÃ'].length + turnos['TARDE'].length + turnos['NOITE'].length;
+  const renderDriverCard = (entregador, clientes, color) => `
+    <div class="rounded-xl p-3 mb-2 last:mb-0" style="background:${color}12;border:1px solid ${color}35;">
+      <div class="flex items-center justify-between mb-2">
+        <div class="font-black text-sm tracking-widest" style="color:${color}">${escapeHtml(entregador)}</div>
+        <div class="text-xs font-bold px-2 py-0.5 rounded-full" style="background:${color}25;color:${color}">${clientes.length}</div>
+      </div>
+      <div class="flex flex-col gap-1">
+        ${clientes.map(c => `<div class="text-xs text-slate-300 px-2 py-1 rounded-lg bg-slate-800/60 truncate">${escapeHtml(c)}</div>`).join('')}
+      </div>
+    </div>
+  `;
 
-  const renderTurno = (key, emoji, color, bgGrad) => {
-    const rotas = turnos[key];
-    const pills = rotas.length === 0
-      ? `<div class="text-slate-500 italic mt-4">Sem saídas</div>`
-      : rotas.map(name => `
-          <div class="px-5 py-3 rounded-xl text-lg font-bold text-white text-center"
-               style="background:${color}20; border:1px solid ${color}60;">
-            ${escapeHtml(name)}
-          </div>
-        `).join('');
+  const renderTurnoCol = (key, emoji, color) => {
+    const drivers = turnos[key];
+    const names = Object.keys(drivers).sort();
+    const totalE = names.reduce((s, d) => s + drivers[d].length, 0);
+    const content = names.length === 0
+      ? `<div class="text-slate-500 italic text-sm mt-6 text-center">Sem entregas</div>`
+      : names.map(d => renderDriverCard(d, drivers[d], color)).join('');
     return `
-      <div class="card flex-1 flex flex-col p-6 relative overflow-hidden min-h-0">
-        <div class="absolute top-0 left-0 right-0 h-1" style="background:${color}"></div>
-        <div class="flex items-center gap-3 mb-5">
-          <div class="text-4xl">${emoji}</div>
+      <div class="card flex-1 flex flex-col p-5 relative overflow-hidden min-h-0">
+        <div class="absolute top-0 left-0 right-0 h-1 rounded-t-xl" style="background:${color}"></div>
+        <div class="flex items-center gap-3 mb-4">
+          <div class="text-3xl">${emoji}</div>
           <div>
-            <div class="text-2xl font-black uppercase tracking-wider" style="color:${color}">${key}</div>
-            <div class="text-xs text-slate-500 uppercase tracking-widest">${rotas.length} rota${rotas.length !== 1 ? 's' : ''}</div>
+            <div class="text-xl font-black uppercase tracking-wider" style="color:${color}">${key}</div>
+            <div class="text-xs text-slate-500 uppercase tracking-widest">
+              ${names.length} entregador${names.length !== 1 ? 'es' : ''} · ${totalE} entrega${totalE !== 1 ? 's' : ''}
+            </div>
           </div>
         </div>
-        <div class="flex flex-col gap-2 overflow-hidden flex-1">${pills}</div>
+        <div class="flex flex-col overflow-y-auto flex-1">${content}</div>
       </div>
     `;
   };
+
+  const gridClass = hasNoite ? 'grid-cols-3' : 'grid-cols-2';
 
   return `
     <div class="flex items-end justify-between mb-4">
       <div>
         <div class="text-xs uppercase tracking-[0.3em] text-slate-500 font-bold">Logística</div>
-        <div class="text-3xl font-bold text-white mt-1">Rotas · ${escapeHtml(diaLabel)}</div>
+        <div class="text-3xl font-bold text-white mt-1">Romaneio · ${escapeHtml(diaLabel)}</div>
       </div>
       <div class="text-right">
-        <div class="text-xs uppercase tracking-widest text-slate-500">Saindo hoje</div>
-        <div class="text-3xl font-black text-brand tabular-nums">${totalRotas}</div>
+        <div class="text-xs uppercase tracking-widest text-slate-500">Entregas hoje</div>
+        <div class="text-3xl font-black text-brand tabular-nums">${total}</div>
       </div>
     </div>
-    <div class="grid grid-cols-3 gap-6 flex-1 min-h-0">
-      ${renderTurno('MANHÃ', '🌅', '#f59e0b', 'amber')}
-      ${renderTurno('TARDE', '☀️', '#3b82f6', 'blue')}
-      ${renderTurno('NOITE', '🌙', '#6366f1', 'indigo')}
+    <div class="grid ${gridClass} gap-6 flex-1 min-h-0">
+      ${renderTurnoCol('MANHÃ', '🌅', '#f59e0b')}
+      ${renderTurnoCol('TARDE', '☀️', '#3b82f6')}
+      ${hasNoite ? renderTurnoCol('NOITE', '🌙', '#6366f1') : ''}
     </div>
   `;
 }
