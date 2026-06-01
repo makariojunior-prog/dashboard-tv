@@ -210,22 +210,81 @@
     <div class="pin-dot" id="pd3"></div>
   </div>
   <div id="pin-error"></div>
-  <!-- Keypad -->
+  <!-- Keypad — onclick chama _pin() definido no script abaixo -->
   <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.75rem;margin-top:1rem;">
-    <button class="pin-key" data-v="1">1</button>
-    <button class="pin-key" data-v="2">2</button>
-    <button class="pin-key" data-v="3">3</button>
-    <button class="pin-key" data-v="4">4</button>
-    <button class="pin-key" data-v="5">5</button>
-    <button class="pin-key" data-v="6">6</button>
-    <button class="pin-key" data-v="7">7</button>
-    <button class="pin-key" data-v="8">8</button>
-    <button class="pin-key" data-v="9">9</button>
+    <button class="pin-key" onclick="_pin('1')">1</button>
+    <button class="pin-key" onclick="_pin('2')">2</button>
+    <button class="pin-key" onclick="_pin('3')">3</button>
+    <button class="pin-key" onclick="_pin('4')">4</button>
+    <button class="pin-key" onclick="_pin('5')">5</button>
+    <button class="pin-key" onclick="_pin('6')">6</button>
+    <button class="pin-key" onclick="_pin('7')">7</button>
+    <button class="pin-key" onclick="_pin('8')">8</button>
+    <button class="pin-key" onclick="_pin('9')">9</button>
     <div></div>
-    <button class="pin-key" data-v="0">0</button>
-    <button class="pin-key" data-v="⌫" id="pin-back">⌫</button>
+    <button class="pin-key" onclick="_pin('0')">0</button>
+    <button class="pin-key" onclick="_pin('DEL')" id="pin-back">⌫</button>
   </div>
 </div>
+
+<!-- Script PIN mínimo — sem dependências externas, roda antes de tudo -->
+<script>
+(function() {
+  var PIN = '2610';
+  var entered = '';
+
+  window._pin = function(v) {
+    if (v === 'DEL') {
+      entered = entered.slice(0, -1);
+      var el = document.getElementById('pin-error');
+      if (el) el.textContent = '';
+    } else if (entered.length < 4) {
+      entered += v;
+      if (entered.length === 4) {
+        if (entered === PIN) {
+          try { sessionStorage.setItem('tv_auth', PIN); } catch(e) {}
+          var ps = document.getElementById('pin-screen');
+          var ma = document.getElementById('main-app');
+          if (ps) ps.style.display = 'none';
+          if (ma) ma.style.removeProperty('display');
+          if (typeof window._pinOk === 'function') window._pinOk();
+        } else {
+          var el = document.getElementById('pin-error');
+          if (el) el.textContent = 'PIN incorreto. Tente novamente.';
+          var dots = document.getElementById('pin-dots');
+          if (dots) { dots.classList.add('shake'); setTimeout(function() { dots.classList.remove('shake'); }, 450); }
+          entered = '';
+        }
+      }
+    }
+    for (var i = 0; i < 4; i++) {
+      var d = document.getElementById('pd' + i);
+      if (d) { d.className = i < entered.length ? 'pin-dot filled' : 'pin-dot'; }
+    }
+  };
+
+  window._pinSetCode = function(code) { PIN = code; };
+
+  // Teclado físico
+  document.addEventListener('keydown', function(e) {
+    var ps = document.getElementById('pin-screen');
+    if (!ps || ps.style.display === 'none') return;
+    if (e.key >= '0' && e.key <= '9') window._pin(e.key);
+    else if (e.key === 'Backspace') window._pin('DEL');
+  });
+
+  // Sessão já autenticada?
+  try {
+    if (sessionStorage.getItem('tv_auth') === PIN) {
+      var ps = document.getElementById('pin-screen');
+      var ma = document.getElementById('main-app');
+      if (ps) ps.style.display = 'none';
+      if (ma) ma.style.removeProperty('display');
+      window._pinAlreadyOk = true;
+    }
+  } catch(e) {}
+})();
+</script>
 
 <style>
   .pin-key {
@@ -239,6 +298,9 @@
     cursor: pointer;
     transition: all 0.12s ease;
     display: flex; align-items: center; justify-content: center;
+    pointer-events: auto;
+    position: relative;
+    z-index: 10000;
   }
   .pin-key:active, .pin-key:hover { background: #334155; border-color: #f97316; color: #f97316; }
 </style>
@@ -294,84 +356,8 @@
  * Comercial TV Dashboard — Cantina em Casa x Lumar
  * ============================================================ */
 
-/* ---------- PIN Gate — roda IMEDIATAMENTE, sem dependências ---------- */
-let PIN_CODE = '2610'; // fallback; atualizado do Supabase após bootstrap
-let _pinUnlockCb = null; // callback chamado quando PIN aceito
-
-function initPin() {
-  const pinScreen = document.getElementById('pin-screen');
-  const mainApp   = document.getElementById('main-app');
-
-  // Sessão já autenticada?
-  if (sessionStorage.getItem('tv_auth') === PIN_CODE) {
-    pinScreen.classList.add('hidden');
-    mainApp.style.removeProperty('display');
-    return true;
-  }
-
-  let entered = '';
-
-  function updateDots() {
-    for (let i = 0; i < 4; i++) {
-      const dot = document.getElementById('pd' + i);
-      if (dot) dot.classList.toggle('filled', i < entered.length);
-    }
-  }
-
-  function showError(msg) {
-    const el = document.getElementById('pin-error');
-    if (el) el.textContent = msg;
-    const dots = document.getElementById('pin-dots');
-    if (dots) { dots.classList.add('shake'); setTimeout(() => dots.classList.remove('shake'), 450); }
-  }
-
-  function tryUnlock() {
-    if (entered === PIN_CODE) {
-      sessionStorage.setItem('tv_auth', PIN_CODE);
-      pinScreen.classList.add('hidden');
-      mainApp.style.removeProperty('display');
-      if (typeof _pinUnlockCb === 'function') { _pinUnlockCb(); _pinUnlockCb = null; }
-    } else {
-      showError('PIN incorreto. Tente novamente.');
-      entered = '';
-      updateDots();
-    }
-  }
-
-  document.querySelectorAll('.pin-key').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const v = btn.dataset.v;
-      if (v === '⌫') {
-        entered = entered.slice(0, -1);
-        const el = document.getElementById('pin-error');
-        if (el) el.textContent = '';
-      } else if (entered.length < 4) {
-        entered += v;
-        if (entered.length === 4) tryUnlock();
-      }
-      updateDots();
-    });
-  });
-
-  document.addEventListener('keydown', (e) => {
-    if (pinScreen.classList.contains('hidden')) return;
-    if (e.key >= '0' && e.key <= '9' && entered.length < 4) {
-      entered += e.key;
-      if (entered.length === 4) tryUnlock();
-      updateDots();
-    } else if (e.key === 'Backspace') {
-      entered = entered.slice(0, -1);
-      const el = document.getElementById('pin-error');
-      if (el) el.textContent = '';
-      updateDots();
-    }
-  });
-
-  return false;
-}
-
-// Inicializa PIN AGORA — antes de qualquer código que possa falhar
-const _pinReady = initPin();
+/* ---------- PIN Gate — tratado pelo script inline acima do main-app ---------- */
+// _pin(), _pinOk, _pinAlreadyOk, _pinSetCode definidos no bloco inline
 
 /* ---------- Supabase (protegido: falha silenciosa se CDN indisponível) ---------- */
 const SUPABASE_URL = 'https://taicaxtjtikdajmhtsxc.supabase.co';
@@ -388,7 +374,7 @@ async function loadPinFromSupabase() {
   if (!db) return;
   try {
     const { data } = await db.from('crm_config').select('value').eq('key', 'tv_dashboard_pin').single();
-    if (data?.value) PIN_CODE = data.value;
+    if (data?.value && typeof window._pinSetCode === 'function') window._pinSetCode(data.value);
   } catch (_) { /* usa fallback */ }
 }
 
@@ -1554,13 +1540,13 @@ function init() {
 function bootstrap() {
   function startDashboard() {
     init();
-    loadPinFromSupabase(); // atualiza PIN em background
+    loadPinFromSupabase();
   }
 
-  if (_pinReady) {
+  if (window._pinAlreadyOk) {
     startDashboard();
   } else {
-    _pinUnlockCb = startDashboard;
+    window._pinOk = startDashboard;
   }
 }
 
