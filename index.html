@@ -771,7 +771,7 @@ async function fetchVisitas() {
 }
 
 async function fetchAlertas() {
-  const [convRes, socialRes] = await Promise.all([
+  const [convRes, socialRes, posvendasRes, posvendasCountRes] = await Promise.all([
     db.from('crm_conversations')
       .select('categoria, nome, telefone, resumo, texto, received_at, conexao')
       .in('categoria', ['QUALIDADE', 'LOGÍSTICA', 'RECLAMAÇÃO'])
@@ -783,10 +783,22 @@ async function fetchAlertas() {
       .select('platform, account, username, nome, mensagem, categoria, received_at')
       .eq('status', 'NOVO')
       .order('received_at', { ascending: false })
-      .limit(6),
+      .limit(4),
+    db.from('crm_posvendas')
+      .select('nome, telefone, dias_pos_compra, dias_sem_contato, n_pedidos, prioridade')
+      .order('prioridade', { ascending: false })
+      .order('dias_sem_contato', { ascending: false })
+      .limit(5),
+    db.from('crm_posvendas')
+      .select('*', { count: 'exact', head: true }),
   ]);
   if (convRes.error) throw convRes.error;
-  return { conversas: convRes.data || [], social: socialRes.data || [] };
+  return {
+    conversas: convRes.data || [],
+    social: socialRes.data || [],
+    posvendas: posvendasRes.data || [],
+    posvendasTotal: posvendasCountRes.count || 0,
+  };
 }
 
 async function fetchAll() {
@@ -1294,15 +1306,23 @@ function platformStyle(platform) {
   return { color: '#64748b', bg: 'rgba(100,116,139,0.15)', label: p.toUpperCase() || 'SOCIAL' };
 }
 
+function posvendaPrioStyle(p) {
+  if (p === 3) return { label: 'Alta', color: '#f97316', bg: 'rgba(249,115,22,0.15)', border: '#f97316' };
+  if (p === 2) return { label: 'Média', color: '#eab308', bg: 'rgba(234,179,8,0.15)', border: '#eab308' };
+  return { label: 'Baixa', color: '#22c55e', bg: 'rgba(34,197,94,0.15)', border: '#22c55e' };
+}
+
 function renderAlertas() {
   if (state.loading.alertas) return renderLoading('Carregando alertas…');
   if (state.errors.alertas) return renderError();
 
   const data = state.data.alertas || {};
-  const conversas = data.conversas || [];
-  const social    = data.social    || [];
+  const conversas      = data.conversas      || [];
+  const social         = data.social         || [];
+  const posvendas      = data.posvendas      || [];
+  const posvendasTotal = data.posvendasTotal || 0;
 
-  if (conversas.length === 0 && social.length === 0) {
+  if (conversas.length === 0 && social.length === 0 && posvendas.length === 0) {
     return `
       <div class="flex-1 flex flex-col items-center justify-center text-center">
         <div class="w-40 h-40 rounded-full bg-emerald-500/10 border-4 border-emerald-500/40 flex items-center justify-center mb-8">
@@ -1398,19 +1418,67 @@ function renderAlertas() {
         ${conversaContent}
       </div>
 
-      <!-- SOCIAL (5 cols) -->
-      <div class="col-span-5 flex flex-col gap-3 min-h-0">
-        <div class="flex items-end justify-between">
-          <div>
-            <div class="text-xs uppercase tracking-[0.3em] text-slate-500 font-bold">Redes Sociais</div>
-            <div class="text-2xl font-bold text-white mt-1">Comentários sem resposta</div>
+      <!-- DIREITA: Social + Pós-venda (5 cols) -->
+      <div class="col-span-5 flex flex-col gap-4 min-h-0 overflow-hidden">
+
+        <!-- Social -->
+        <div class="flex flex-col gap-2 min-h-0" style="flex: 1 1 0;">
+          <div class="flex items-end justify-between">
+            <div>
+              <div class="text-xs uppercase tracking-[0.3em] text-slate-500 font-bold">Redes Sociais</div>
+              <div class="text-xl font-bold text-white mt-1">Comentários sem resposta</div>
+            </div>
+            <div class="text-right">
+              <div class="text-xs uppercase tracking-widest text-slate-500">Pendentes</div>
+              <div class="text-xl font-black tabular-nums" style="color:${social.length > 0 ? '#e1306c' : '#22c55e'}">${social.length}</div>
+            </div>
           </div>
-          <div class="text-right">
-            <div class="text-xs uppercase tracking-widest text-slate-500">Pendentes</div>
-            <div class="text-2xl font-black tabular-nums" style="color:${social.length > 0 ? '#e1306c' : '#22c55e'}">${social.length}</div>
-          </div>
+          ${socialContent}
         </div>
-        ${socialContent}
+
+        <!-- Pós-venda Pendentes -->
+        <div class="flex flex-col gap-2 min-h-0" style="flex: 1 1 0;">
+          <div class="flex items-end justify-between">
+            <div>
+              <div class="text-xs uppercase tracking-[0.3em] text-slate-500 font-bold">CRM · Pós-venda</div>
+              <div class="text-xl font-bold text-white mt-1">Clientes pendentes</div>
+            </div>
+            <div class="text-right">
+              <div class="text-xs uppercase tracking-widest text-slate-500">Total</div>
+              <div class="text-xl font-black tabular-nums" style="color:${posvendasTotal > 0 ? '#f97316' : '#22c55e'}">${posvendasTotal}</div>
+            </div>
+          </div>
+          ${posvendas.length === 0
+            ? `<div class="flex-1 flex flex-col items-center justify-center text-center text-slate-500">
+                 <div class="text-5xl mb-2">🎉</div>
+                 <div class="text-base font-semibold text-emerald-300">Sem pós-vendas pendentes</div>
+               </div>`
+            : `<div class="flex flex-col gap-2 flex-1 min-h-0 overflow-hidden">
+                ${posvendas.map(pv => {
+                  const pr = posvendaPrioStyle(pv.prioridade);
+                  const nome = escapeHtml(pv.nome || pv.telefone || '—');
+                  const dias = pv.dias_sem_contato != null ? pv.dias_sem_contato : '?';
+                  const pedidos = pv.n_pedidos != null ? pv.n_pedidos : '?';
+                  return `
+                    <div class="card flex items-center gap-3 px-4 py-2.5" style="border-left:4px solid ${pr.border};">
+                      <div class="shrink-0">
+                        <span class="badge text-[10px]" style="background:${pr.bg}; color:${pr.color}; border:1px solid ${pr.color}40;">
+                          ${pr.label}
+                        </span>
+                      </div>
+                      <div class="flex-1 min-w-0">
+                        <div class="text-sm font-bold text-white truncate">${nome}</div>
+                      </div>
+                      <div class="shrink-0 text-right">
+                        <div class="text-sm font-black tabular-nums" style="color:${pr.color}">${dias}d</div>
+                        <div class="text-[10px] text-slate-500">${pedidos} pedido${pedidos !== 1 ? 's' : ''}</div>
+                      </div>
+                    </div>`;
+                }).join('')}
+               </div>`
+          }
+        </div>
+
       </div>
 
     </div>
