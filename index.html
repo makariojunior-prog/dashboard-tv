@@ -771,7 +771,7 @@ async function fetchVisitas() {
 }
 
 async function fetchAlertas() {
-  const [convRes, socialRes, posvendasRes, posvendasCountRes] = await Promise.all([
+  const [convRes, socialRes, posvendasRes] = await Promise.all([
     db.from('crm_conversations')
       .select('categoria, nome, telefone, resumo, texto, received_at, conexao')
       .in('categoria', ['QUALIDADE', 'LOGÍSTICA', 'RECLAMAÇÃO'])
@@ -785,19 +785,18 @@ async function fetchAlertas() {
       .order('received_at', { ascending: false })
       .limit(4),
     db.from('crm_posvendas')
-      .select('nome, telefone, dias_pos_compra, dias_sem_contato, n_pedidos, prioridade')
-      .order('prioridade', { ascending: false })
+      .select('nome, telefone, ult_compra, dias_pos_compra, n_pedidos')
+      .eq('prioridade', 1)
       .order('dias_sem_contato', { ascending: false })
-      .limit(5),
-    db.from('crm_posvendas')
-      .select('*', { count: 'exact', head: true }),
+      .limit(50),
   ]);
   if (convRes.error) throw convRes.error;
+  const posvendas = posvendasRes.data || [];
   return {
     conversas: convRes.data || [],
     social: socialRes.data || [],
-    posvendas: posvendasRes.data || [],
-    posvendasTotal: posvendasCountRes.count || 0,
+    posvendas: posvendas,
+    posvendasTotal: posvendas.length,
   };
 }
 
@@ -1306,10 +1305,11 @@ function platformStyle(platform) {
   return { color: '#64748b', bg: 'rgba(100,116,139,0.15)', label: p.toUpperCase() || 'SOCIAL' };
 }
 
-function posvendaPrioStyle(p) {
-  if (p === 3) return { label: 'Alta', color: '#f97316', bg: 'rgba(249,115,22,0.15)', border: '#f97316' };
-  if (p === 2) return { label: 'Média', color: '#eab308', bg: 'rgba(234,179,8,0.15)', border: '#eab308' };
-  return { label: 'Baixa', color: '#22c55e', bg: 'rgba(34,197,94,0.15)', border: '#22c55e' };
+function formatDDMM(s) {
+  if (!s) return '—';
+  var parts = s.split('-');
+  if (parts.length < 3) return s;
+  return parts[2] + '/' + parts[1];
 }
 
 function renderAlertas() {
@@ -1441,40 +1441,38 @@ function renderAlertas() {
           <div class="flex items-end justify-between">
             <div>
               <div class="text-xs uppercase tracking-[0.3em] text-slate-500 font-bold">CRM · Pós-venda</div>
-              <div class="text-xl font-bold text-white mt-1">Clientes pendentes</div>
+              <div class="text-xl font-bold text-white mt-1">Pós-Venda Pendentes</div>
             </div>
             <div class="text-right">
-              <div class="text-xs uppercase tracking-widest text-slate-500">Total</div>
-              <div class="text-xl font-black tabular-nums" style="color:${posvendasTotal > 0 ? '#f97316' : '#22c55e'}">${posvendasTotal}</div>
+              <span class="text-xs font-bold px-2 py-0.5 rounded-full tabular-nums" style="background:rgba(56,189,248,0.15);color:#38bdf8;">
+                ${posvendasTotal} pendente${posvendasTotal !== 1 ? 's' : ''}
+              </span>
             </div>
           </div>
           ${posvendas.length === 0
             ? `<div class="flex-1 flex flex-col items-center justify-center text-center text-slate-500">
-                 <div class="text-5xl mb-2">🎉</div>
-                 <div class="text-base font-semibold text-emerald-300">Sem pós-vendas pendentes</div>
+                 <div class="text-5xl mb-2">📞</div>
+                 <div class="text-base font-semibold text-emerald-300">Nenhum pós-venda pendente</div>
                </div>`
-            : `<div class="flex flex-col gap-2 flex-1 min-h-0 overflow-hidden">
-                ${posvendas.map(pv => {
-                  const pr = posvendaPrioStyle(pv.prioridade);
+            : `<div class="flex flex-col gap-1.5 flex-1 min-h-0 overflow-hidden">
+                ${posvendas.slice(0, 6).map(pv => {
                   const nome = escapeHtml(pv.nome || pv.telefone || '—');
-                  const dias = pv.dias_sem_contato != null ? pv.dias_sem_contato : '?';
-                  const pedidos = pv.n_pedidos != null ? pv.n_pedidos : '?';
+                  const data = escapeHtml(formatDDMM(pv.ult_compra));
+                  const dias = pv.dias_pos_compra != null ? pv.dias_pos_compra : '?';
+                  const isPrimeiro = pv.n_pedidos === 1;
+                  const diasColor = (dias >= 30) ? '#f97316' : '#94a3b8';
                   return `
-                    <div class="card flex items-center gap-3 px-4 py-2.5" style="border-left:4px solid ${pr.border};">
-                      <div class="shrink-0">
-                        <span class="badge text-[10px]" style="background:${pr.bg}; color:${pr.color}; border:1px solid ${pr.color}40;">
-                          ${pr.label}
-                        </span>
-                      </div>
+                    <div class="card flex items-center gap-3 px-3 py-2.5" style="border-left:3px solid #38bdf8;">
+                      <span style="width:8px;height:8px;border-radius:50%;background:#38bdf8;flex-shrink:0;"></span>
                       <div class="flex-1 min-w-0">
-                        <div class="text-sm font-bold text-white truncate">${nome}</div>
+                        <div class="text-sm font-medium text-white truncate">${nome}</div>
                       </div>
-                      <div class="shrink-0 text-right">
-                        <div class="text-sm font-black tabular-nums" style="color:${pr.color}">${dias}d</div>
-                        <div class="text-[10px] text-slate-500">${pedidos} pedido${pedidos !== 1 ? 's' : ''}</div>
-                      </div>
+                      ${isPrimeiro ? `<span class="text-[9px] font-bold px-1 py-0.5 rounded shrink-0" style="background:rgba(167,139,250,0.2);color:#a78bfa;">1°</span>` : ''}
+                      <span class="text-[11px] text-slate-400 shrink-0 tabular-nums">${data}</span>
+                      <span class="text-[11px] font-semibold shrink-0 tabular-nums" style="color:${diasColor}">${dias}d</span>
                     </div>`;
                 }).join('')}
+                ${posvendas.length > 6 ? `<div class="text-[11px] text-center text-slate-500 pt-1">+${posvendas.length - 6} mais pendentes</div>` : ''}
                </div>`
           }
         </div>
