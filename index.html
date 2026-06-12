@@ -771,7 +771,17 @@ async function fetchVisitas() {
 }
 
 async function fetchAlertas() {
-  const [convRes, socialRes, posvendasRes] = await Promise.all([
+  // Data local (Brasília) no formato yyyy-mm-dd — toISOString() usaria UTC e viraria o dia às 21h
+  const agora = new Date();
+  const hojeStr = agora.getFullYear() + '-' +
+    String(agora.getMonth() + 1).padStart(2, '0') + '-' +
+    String(agora.getDate()).padStart(2, '0');
+  const amanha = new Date(agora.getTime() + 86400000);
+  const amanhaStr = amanha.getFullYear() + '-' +
+    String(amanha.getMonth() + 1).padStart(2, '0') + '-' +
+    String(amanha.getDate()).padStart(2, '0');
+
+  const [convRes, socialRes, posvendasRes, recomprasRes] = await Promise.all([
     db.from('crm_conversations')
       .select('categoria, nome, telefone, resumo, texto, received_at, conexao')
       .in('categoria', ['QUALIDADE', 'LOGÍSTICA', 'RECLAMAÇÃO'])
@@ -789,14 +799,23 @@ async function fetchAlertas() {
       .eq('prioridade', 1)
       .order('dias_sem_contato', { ascending: false })
       .limit(50),
+    // Contatos de recompra registrados hoje (mesma lógica do PosVendaWidget do CRM)
+    db.from('crm_posvendas_interacoes')
+      .select('nome, telefone, created_at, usuario_nome')
+      .gte('data_interacao', hojeStr)
+      .lt('data_interacao', amanhaStr)
+      .order('created_at', { ascending: false })
+      .limit(50),
   ]);
   if (convRes.error) throw convRes.error;
   const posvendas = posvendasRes.data || [];
+  const recompras = recomprasRes.data || [];
   return {
     conversas: convRes.data || [],
     social: socialRes.data || [],
     posvendas: posvendas,
     posvendasTotal: posvendas.length,
+    recompras: recompras,
   };
 }
 
@@ -1156,7 +1175,7 @@ function renderRotas() {
             </div>
           </div>
         </div>
-        <div class="flex flex-col overflow-y-auto flex-1">${content}</div>
+        <div class="flex flex-col overflow-y-auto flex-1 auto-scroll">${content}</div>
       </div>
     `;
   };
@@ -1164,18 +1183,18 @@ function renderRotas() {
   const renderADistribuir = () => {
     if (!hasADist) return '';
     const pills = aDistribuir.map(c =>
-      `<div class="px-3 py-1.5 rounded-lg bg-slate-700/60 border border-slate-600/40 text-xs text-slate-300 truncate">${escapeHtml(c)}</div>`
+      `<div class="px-3 py-1.5 rounded-lg text-xs truncate" style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.45);color:#fca5a5;font-weight:600;">${escapeHtml(c)}</div>`
     ).join('');
     return `
-      <div class="card p-4 relative mt-4" style="border-top:3px solid #e879f9;">
+      <div class="card p-4 relative mt-4" style="border:1px solid rgba(239,68,68,0.5);border-top:3px solid #ef4444;background:rgba(239,68,68,0.07);">
         <div class="flex items-center gap-2 mb-3">
-          <div class="text-xl">📋</div>
+          <div class="text-xl">🚨</div>
           <div>
-            <div class="text-base font-black uppercase tracking-wider text-fuchsia-400">A Distribuir</div>
-            <div class="text-xs text-slate-500 uppercase tracking-widest">${aDistribuir.length} entrega${aDistribuir.length !== 1 ? 's' : ''} sem entregador</div>
+            <div class="text-base font-black uppercase tracking-wider" style="color:#f87171;">A Distribuir</div>
+            <div class="text-xs uppercase tracking-widest" style="color:#fca5a5;">${aDistribuir.length} entrega${aDistribuir.length !== 1 ? 's' : ''} sem entregador</div>
           </div>
         </div>
-        <div class="flex flex-wrap gap-2 overflow-y-auto max-h-28">${pills}</div>
+        <div class="flex flex-wrap gap-2 overflow-y-auto max-h-28 auto-scroll">${pills}</div>
       </div>
     `;
   };
@@ -1321,8 +1340,9 @@ function renderAlertas() {
   const social         = data.social         || [];
   const posvendas      = data.posvendas      || [];
   const posvendasTotal = data.posvendasTotal || 0;
+  const recompras      = data.recompras      || [];
 
-  if (conversas.length === 0 && social.length === 0 && posvendas.length === 0) {
+  if (conversas.length === 0 && social.length === 0 && posvendas.length === 0 && recompras.length === 0) {
     return `
       <div class="flex-1 flex flex-col items-center justify-center text-center">
         <div class="w-40 h-40 rounded-full bg-emerald-500/10 border-4 border-emerald-500/40 flex items-center justify-center mb-8">
@@ -1436,45 +1456,84 @@ function renderAlertas() {
           ${socialContent}
         </div>
 
-        <!-- Pós-venda Pendentes -->
+        <!-- Pós-venda: Pendentes + Recompra Hoje (espelha o PosVendaWidget do CRM) -->
         <div class="flex flex-col gap-2 min-h-0" style="flex: 1 1 0;">
-          <div class="flex items-end justify-between">
-            <div>
-              <div class="text-xs uppercase tracking-[0.3em] text-slate-500 font-bold">CRM · Pós-venda</div>
-              <div class="text-xl font-bold text-white mt-1">Pós-Venda Pendentes</div>
+          <div class="grid grid-cols-2 gap-4 flex-1 min-h-0">
+
+            <!-- Pendentes -->
+            <div class="flex flex-col gap-2 min-h-0">
+              <div class="flex items-end justify-between">
+                <div>
+                  <div class="text-xs uppercase tracking-[0.3em] text-slate-500 font-bold">CRM · Pós-venda</div>
+                  <div class="text-lg font-bold text-white mt-1">📞 Pendentes</div>
+                </div>
+                <span class="text-xs font-bold px-2 py-0.5 rounded-full tabular-nums" style="background:rgba(167,139,250,0.15);color:#a78bfa;">
+                  ${posvendasTotal}
+                </span>
+              </div>
+              ${posvendas.length === 0
+                ? `<div class="flex-1 flex flex-col items-center justify-center text-center text-slate-500">
+                     <div class="text-4xl mb-2">📞</div>
+                     <div class="text-sm font-semibold text-emerald-300">Nenhum pendente</div>
+                   </div>`
+                : `<div class="flex flex-col gap-1.5 flex-1 min-h-0 overflow-hidden">
+                    ${posvendas.slice(0, 5).map(pv => {
+                      const nome = escapeHtml(pv.nome || pv.telefone || '—');
+                      const data = escapeHtml(formatDDMM(pv.ult_compra));
+                      const dias = pv.dias_pos_compra != null ? pv.dias_pos_compra : '?';
+                      const isPrimeiro = pv.n_pedidos === 1;
+                      const diasColor = (dias >= 30) ? '#f97316' : '#94a3b8';
+                      return `
+                        <div class="card flex items-center gap-3 px-3 py-2.5" style="border-left:3px solid #a78bfa;">
+                          <div class="flex-1 min-w-0">
+                            <div class="text-sm font-medium text-white truncate">${nome}</div>
+                          </div>
+                          ${isPrimeiro ? `<span class="text-[9px] font-bold px-1 py-0.5 rounded shrink-0" style="background:rgba(167,139,250,0.2);color:#a78bfa;">1°</span>` : ''}
+                          <span class="text-[11px] text-slate-400 shrink-0 tabular-nums">${data}</span>
+                          <span class="text-[11px] font-semibold shrink-0 tabular-nums" style="color:${diasColor}">${dias}d</span>
+                        </div>`;
+                    }).join('')}
+                    ${posvendas.length > 5 ? `<div class="text-[11px] text-center text-slate-500 pt-1">+${posvendas.length - 5} mais</div>` : ''}
+                   </div>`
+              }
             </div>
-            <div class="text-right">
-              <span class="text-xs font-bold px-2 py-0.5 rounded-full tabular-nums" style="background:rgba(56,189,248,0.15);color:#a78bfa;">
-                ${posvendasTotal} pendente${posvendasTotal !== 1 ? 's' : ''}
-              </span>
+
+            <!-- Recompra Hoje -->
+            <div class="flex flex-col gap-2 min-h-0">
+              <div class="flex items-end justify-between">
+                <div>
+                  <div class="text-xs uppercase tracking-[0.3em] text-slate-500 font-bold">CRM · Recompra</div>
+                  <div class="text-lg font-bold text-white mt-1">📤 Recompra Hoje</div>
+                </div>
+                <span class="text-xs font-bold px-2 py-0.5 rounded-full tabular-nums" style="background:rgba(248,113,113,0.15);color:#f87171;">
+                  ${recompras.length}
+                </span>
+              </div>
+              ${recompras.length === 0
+                ? `<div class="flex-1 flex flex-col items-center justify-center text-center text-slate-500">
+                     <div class="text-4xl mb-2">📤</div>
+                     <div class="text-sm font-semibold text-emerald-300">Nenhum contato hoje</div>
+                   </div>`
+                : `<div class="flex flex-col gap-1.5 flex-1 min-h-0 overflow-hidden">
+                    ${recompras.slice(0, 5).map(r => {
+                      const nome = escapeHtml(r.nome || r.telefone || '—');
+                      const hora = escapeHtml(formatTime(r.created_at));
+                      const quem = escapeHtml(r.usuario_nome || 'atendente');
+                      return `
+                        <div class="card flex items-center gap-3 px-3 py-2.5" style="border-left:3px solid #f87171;background:rgba(248,113,113,0.06);">
+                          <div class="flex-1 min-w-0">
+                            <div class="text-sm font-medium text-white truncate">${nome}</div>
+                            <div class="text-[11px] text-slate-400 tabular-nums">${hora}</div>
+                          </div>
+                          <span class="text-[11px] text-slate-400 shrink-0 truncate" style="max-width:90px;">${quem}</span>
+                        </div>`;
+                    }).join('')}
+                    ${recompras.length > 5 ? `<div class="text-[11px] text-center text-slate-500 pt-1">+${recompras.length - 5} mais</div>` : ''}
+                   </div>`
+              }
             </div>
+
           </div>
-          ${posvendas.length === 0
-            ? `<div class="flex-1 flex flex-col items-center justify-center text-center text-slate-500">
-                 <div class="text-5xl mb-2">📞</div>
-                 <div class="text-base font-semibold text-emerald-300">Nenhum pós-venda pendente</div>
-               </div>`
-            : `<div class="flex flex-col gap-1.5 flex-1 min-h-0 overflow-hidden">
-                ${posvendas.slice(0, 6).map(pv => {
-                  const nome = escapeHtml(pv.nome || pv.telefone || '—');
-                  const data = escapeHtml(formatDDMM(pv.ult_compra));
-                  const dias = pv.dias_pos_compra != null ? pv.dias_pos_compra : '?';
-                  const isPrimeiro = pv.n_pedidos === 1;
-                  const diasColor = (dias >= 30) ? '#f97316' : '#94a3b8';
-                  return `
-                    <div class="card flex items-center gap-3 px-3 py-2.5" style="border-left:3px solid #a78bfa;">
-                      <span style="width:8px;height:8px;border-radius:50%;background:#a78bfa;flex-shrink:0;"></span>
-                      <div class="flex-1 min-w-0">
-                        <div class="text-sm font-medium text-white truncate">${nome}</div>
-                      </div>
-                      ${isPrimeiro ? `<span class="text-[9px] font-bold px-1 py-0.5 rounded shrink-0" style="background:rgba(167,139,250,0.2);color:#a78bfa;">1°</span>` : ''}
-                      <span class="text-[11px] text-slate-400 shrink-0 tabular-nums">${data}</span>
-                      <span class="text-[11px] font-semibold shrink-0 tabular-nums" style="color:${diasColor}">${dias}d</span>
-                    </div>`;
-                }).join('')}
-                ${posvendas.length > 6 ? `<div class="text-[11px] text-center text-slate-500 pt-1">+${posvendas.length - 6} mais pendentes</div>` : ''}
-               </div>`
-          }
         </div>
 
       </div>
@@ -1533,6 +1592,7 @@ function renderCurrentSlide() {
   screenName.textContent = screen.name;
   screenCurrent.textContent = state.currentSlide + 1;
   renderDots();
+  startAutoScroll();
 
   // Map lifecycle
   const isMap = screen.id === 'rastreamento';
@@ -1551,6 +1611,36 @@ function renderCurrentSlide() {
       if (_map) { _map.remove(); _map = null; }
     }
   }
+}
+
+/* ---------- Auto-scroll gradual (TV sem mouse) ----------
+   Toda lista com a classe .auto-scroll que tiver conteúdo além da área
+   visível rola suavemente até o fim, pausa, e volta ao topo — em loop. */
+let _autoScrollTimers = [];
+
+function stopAutoScroll() {
+  _autoScrollTimers.forEach(clearInterval);
+  _autoScrollTimers = [];
+}
+
+function startAutoScroll() {
+  stopAutoScroll();
+  document.querySelectorAll('.auto-scroll').forEach(el => {
+    if (el.scrollHeight <= el.clientHeight + 4) return; // sem overflow, nada a rolar
+    el.scrollTop = 0;
+    let dir = 1;                          // 1 = descendo, -1 = subindo
+    let pauseUntil = Date.now() + 3000;   // pausa inicial no topo
+    const timer = setInterval(() => {
+      if (!document.body.contains(el)) { clearInterval(timer); return; }
+      if (Date.now() < pauseUntil) return;
+      el.scrollTop += dir * 1;            // 1px a cada 40ms ≈ 25px/s, gradual
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 2;
+      const atTop    = el.scrollTop <= 0;
+      if (dir === 1 && atBottom)      { dir = -1; pauseUntil = Date.now() + 3000; }
+      else if (dir === -1 && atTop)   { dir = 1;  pauseUntil = Date.now() + 3000; }
+    }, 40);
+    _autoScrollTimers.push(timer);
+  });
 }
 
 function renderDots() {
