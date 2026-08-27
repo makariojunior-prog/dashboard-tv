@@ -405,7 +405,7 @@ async function loadPinFromSupabase() {
 }
 
 const SLIDE_DURATION = 25000;
-const REFRESH_INTERVAL = 3 * 60 * 1000;
+const REFRESH_INTERVAL = 6 * 60 * 1000;
 
 /* ---------- Velotrack ---------- */
 const VT_BASE = 'https://track.velotrack.com.br/api/index.php';
@@ -659,32 +659,16 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
-/* ---------- Data fetching ---------- */
-async function fetchPedidos() {
-  const today = todayStr();
-
-  const [varejoRes, atacadoRes, filaRes] = await Promise.all([
-    db.from('varejo_pedidos')
-      .select('origem, order_type, entregador, valor_liquido, status_icon')
-      .eq('data_entrega', today),
-    db.from('atacado_pedidos')
-      .select('valor, ignorado, tipo, data_entrega')
-      .eq('data_entrega', today)
-      .eq('ignorado', false),
-    db.from('varejo_pedidos')
-      .select('num_pedido, cliente, bairro, origem')
-      .eq('status_icon', '⚠️')
-      .is('turno', null)
-      .eq('origem', 'CARDAPIO WEB')
-      .neq('order_type', 'takeout')
-      .order('created_at', { ascending: false })
-      .limit(50),
-  ]);
-
-  if (varejoRes.error) throw varejoRes.error;
-  if (atacadoRes.error) throw atacadoRes.error;
-
-  const varejoRaw = (varejoRes.data || []).filter(r => r.status_icon !== '❌');
+/* ---------- Data fetching ----------
+ * Antes: ~10 requisições REST separadas por ciclo (uma por tabela/seção),
+ * rodando a cada REFRESH_INTERVAL, 24h por dia, todo santo dia — o maior
+ * contribuinte identificado para o consumo de egress do projeto.
+ * Agora: 1 única chamada RPC (tv_dashboard_snapshot, ver supabase/migrations
+ * em comercial-crm) que roda as mesmas queries no servidor e devolve tudo
+ * num JSON só. As funções abaixo viram transformações puras (síncronas)
+ * sobre esse snapshot — mesmos filtros, mesmos limits, mesmo resultado. */
+function buildPedidos(snap) {
+  const varejoRaw = (snap.varejo_hoje || []).filter(r => r.status_icon !== '❌');
 
   const buckets = {
     entrega:  { count: 0, valor: 0 },
@@ -720,11 +704,11 @@ async function fetchPedidos() {
   const varejoTotalCount = buckets.entrega.count + buckets.retirada.count + buckets.ifood.count + buckets.food99.count;
   const varejoTotalValor = buckets.entrega.valor + buckets.retirada.valor + buckets.ifood.valor + buckets.food99.valor;
 
-  const atacadoRaw = (atacadoRes.data || []).filter(r => String(r.tipo || '').toUpperCase() !== 'CANCELADO');
+  const atacadoRaw = (snap.atacado_hoje || []).filter(r => String(r.tipo || '').toUpperCase() !== 'CANCELADO');
   const atacadoCount = atacadoRaw.length;
   const atacadoValor = atacadoRaw.reduce((s, r) => s + (Number(r.valor) || 0), 0);
 
-  const filaRaw = (filaRes.data || []).filter(r => String(r.entregador || '').toUpperCase() !== 'RETIRADA');
+  const filaRaw = (snap.fila || []).filter(r => String(r.entregador || '').toUpperCase() !== 'RETIRADA');
 
   return {
     varejo:  { buckets, totalCount: varejoTotalCount, totalValor: varejoTotalValor },
@@ -733,118 +717,38 @@ async function fetchPedidos() {
   };
 }
 
-async function fetchAgenda() {
-  const today = todayStr();
-  const { data, error } = await db.from('agenda_compromissos')
-    .select('tipo, hora_inicio, cliente_nome, responsaveis, local, status')
-    .eq('data', today)
-    .neq('status', 'CANCELADO')
-    .order('hora_inicio', { ascending: true })
-    .limit(8);
-  if (error) throw error;
-  return data || [];
-}
-
-async function fetchRotas() {
-  const today = todayStr();
-  const { data, error } = await db
-    .from('atacado_pedidos')
-    .select('turno, entregador, cliente_nome, numero_pedido')
-    .eq('data_entrega', today)
-    .order('turno',        { nullsFirst: false })
-    .order('entregador',   { nullsFirst: false })
-    .order('cliente_nome', { nullsFirst: false });
-  if (error) throw error;
-  return (data || []).filter(r => r.ignorado !== true);
-}
-
-async function fetchVisitas() {
-  const sevenAgo = nDaysAgoStr(7);
-  const { data, error } = await db.from('visits')
-    .select('visit_date, visit_type, client_name, responsible, demand, report, priority, created_at')
-    .gte('visit_date', sevenAgo)
-    .order('visit_date', { ascending: false })
-    .order('created_at', { ascending: false })
-    .limit(6);
-  if (error) throw error;
-  return data || [];
-}
-
-async function fetchAlertas() {
-  // Data local (Brasília) no formato yyyy-mm-dd — toISOString() usaria UTC e viraria o dia às 21h
-  const agora = new Date();
-  const hojeStr = agora.getFullYear() + '-' +
-    String(agora.getMonth() + 1).padStart(2, '0') + '-' +
-    String(agora.getDate()).padStart(2, '0');
-  const amanha = new Date(agora.getTime() + 86400000);
-  const amanhaStr = amanha.getFullYear() + '-' +
-    String(amanha.getMonth() + 1).padStart(2, '0') + '-' +
-    String(amanha.getDate()).padStart(2, '0');
-
-  const [convRes, socialRes, posvendasRes, recomprasRes] = await Promise.all([
-    db.from('crm_conversations')
-      .select('categoria, nome, telefone, resumo, texto, received_at, conexao')
-      .in('categoria', ['QUALIDADE', 'LOGÍSTICA', 'RECLAMAÇÃO'])
-      .eq('visto', false)
-      .eq('archived', false)
-      .order('received_at', { ascending: false })
-      .limit(8),
-    db.from('crm_social_comments')
-      .select('platform, account, username, nome, mensagem, categoria, received_at')
-      .eq('status', 'NOVO')
-      .order('received_at', { ascending: false })
-      .limit(4),
-    db.from('crm_posvendas')
-      .select('nome, telefone, ult_compra, dias_pos_compra, n_pedidos')
-      .eq('prioridade', 1)
-      .order('dias_sem_contato', { ascending: false })
-      .limit(50),
-    // Contatos de recompra registrados hoje (mesma lógica do PosVendaWidget do CRM)
-    db.from('crm_posvendas_interacoes')
-      .select('nome, telefone, created_at, usuario_nome')
-      .gte('data_interacao', hojeStr)
-      .lt('data_interacao', amanhaStr)
-      .order('created_at', { ascending: false })
-      .limit(50),
-  ]);
-  if (convRes.error) throw convRes.error;
-  const posvendas = posvendasRes.data || [];
-  const recompras = recomprasRes.data || [];
+function buildAlertas(snap) {
+  const posvendas = snap.posvendas || [];
   return {
-    conversas: convRes.data || [],
-    social: socialRes.data || [],
+    conversas: snap.conversas || [],
+    social: snap.social || [],
     posvendas: posvendas,
     posvendasTotal: posvendas.length,
-    recompras: recompras,
+    recompras: snap.recompras || [],
   };
 }
 
 async function fetchAll() {
-  const tasks = [
-    ['pedidos', fetchPedidos],
-    ['agenda',  fetchAgenda],
-    ['rotas',   fetchRotas],
-    ['visitas', fetchVisitas],
-    ['alertas', fetchAlertas],
-  ];
+  const keys = ['pedidos', 'agenda', 'rotas', 'visitas', 'alertas'];
+  keys.forEach(key => { state.loading[key] = true; state.errors[key] = false; });
 
-  // Mark all loading
-  tasks.forEach(([key]) => { state.loading[key] = true; state.errors[key] = false; });
+  const { data: snap, error } = await db.rpc('tv_dashboard_snapshot');
 
-  const results = await Promise.allSettled(tasks.map(([, fn]) => fn()));
+  keys.forEach(key => { state.loading[key] = false; });
 
-  tasks.forEach(([key], i) => {
-    const r = results[i];
-    state.loading[key] = false;
-    if (r.status === 'fulfilled') {
-      state.data[key] = r.value;
-      state.errors[key] = false;
-    } else {
-      console.error(`[${key}] fetch error:`, r.reason);
-      state.data[key] = null;
-      state.errors[key] = true;
-    }
-  });
+  if (error || !snap) {
+    console.error('[tv_dashboard_snapshot] fetch error:', error);
+    keys.forEach(key => { state.data[key] = null; state.errors[key] = true; });
+    renderCurrentSlide();
+    return;
+  }
+
+  state.data.pedidos = buildPedidos(snap);
+  state.data.agenda  = snap.agenda || [];
+  state.data.rotas   = (snap.rotas || []).filter(r => r.ignorado !== true);
+  state.data.visitas = snap.visitas || [];
+  state.data.alertas = buildAlertas(snap);
+  keys.forEach(key => { state.errors[key] = false; });
 
   renderCurrentSlide();
 }
