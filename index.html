@@ -429,11 +429,10 @@ try {
 const SLIDE_DURATION = 25000;
 const REFRESH_INTERVAL = 6 * 60 * 1000;
 
-/* ---------- Velotrack ---------- */
-const VT_BASE = 'https://track.velotrack.com.br/api/index.php';
-const VT_USER = 'integracao@gmail.com';
-const VT_PASS = '!Cantina26012019';
-let vtSess = null;   // { uid, browser, idcustomer }
+/* ---------- Velotrack (via proxy no Supabase Edge Functions — sem credenciais aqui) ---------- */
+// O login e a consulta ao Velotrack rodam no servidor (supabase/functions/vt-positions);
+// a senha nunca chega ao navegador da TV. Ver o arquivo da função para o motivo.
+const VT_PROXY_URL = SUPABASE_URL + '/functions/v1/vt-positions';
 let _map = null;     // Leaflet map instance
 let _mapPollTimer = null;
 let _mapScreenActive = false;
@@ -454,35 +453,12 @@ function loadCSS(href) {
 }
 async function loadMapDeps() {
   loadCSS('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');
-  await Promise.all([
-    loadScript('https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'),
-    loadScript('https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js'),
-  ]);
-}
-
-async function vtLogin() {
-  const ts = Date.now();
-  const passHash = md5(VT_PASS);
-  const uidHash  = md5(`${VT_USER}:${passHash}:${ts}`);
-  const ua = navigator.userAgent;
-  const res = await fetch(`${VT_BASE}/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ desc_uid: uidHash, desc_useragent: ua, desc_data: ts })
-  });
-  if (!res.ok) throw new Error(`VT login HTTP ${res.status}`);
-  const d = await res.json();
-  vtSess = { uid: d.desc_uid_retorno, browser: ua, idcustomer: d.idcustomer };
-  return vtSess;
+  await loadScript('https://unpkg.com/leaflet@1.9.4/dist/leaflet.js');
 }
 
 async function fetchRastreamento() {
-  if (!vtSess) await vtLogin();
-  const res = await fetch(`${VT_BASE}/mobile/${vtSess.idcustomer}/positionv2`, {
-    headers: { uid: vtSess.uid, browser: vtSess.browser }
-  });
-  if (res.status === 401) { vtSess = null; await vtLogin(); return fetchRastreamento(); }
-  if (!res.ok) throw new Error(`VT positions HTTP ${res.status}`);
+  const res = await fetch(VT_PROXY_URL, { headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY } });
+  if (!res.ok) throw new Error(`VT proxy HTTP ${res.status}`);
   return await res.json();   // array of vehicles
 }
 
