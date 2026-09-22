@@ -245,40 +245,70 @@ window.onerror = function(msg, src, line) {
 <!-- Script PIN mínimo — sem dependências externas, roda antes de tudo -->
 <script>
 (function() {
-  var PIN = '2610';
+  var SB_URL = 'https://taicaxtjtikdajmhtsxc.supabase.co';
+  var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRhaWNheHRqdGlrZGFqbWh0c3hjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0MjgwNzcsImV4cCI6MjA5MzAwNDA3N30.G923g-1cmjrQZi7EoOcZcP1PieO9AKmk4mMMUgT4hbE';
   var entered = '';
+  var busy = false;
+
+  // O PIN nunca chega ao navegador: a conferência é feita no banco (função tv_verify_pin).
+  function verificarPin(code) {
+    return fetch(SB_URL + '/rest/v1/rpc/tv_verify_pin', {
+      method: 'POST',
+      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_pin: code })
+    }).then(function(r) {
+      if (!r.ok) throw new Error('http ' + r.status);
+      return r.json();
+    }).then(function(ok) { return ok === true; });
+  }
+
+  function atualizarPontos() {
+    for (var i = 0; i < 4; i++) {
+      var d = document.getElementById('pd' + i);
+      if (d) { d.className = i < entered.length ? 'pin-dot filled' : 'pin-dot'; }
+    }
+  }
+
+  function mostrarErro(msg) {
+    var el = document.getElementById('pin-error');
+    if (el) el.textContent = msg;
+    var dots = document.getElementById('pin-dots');
+    if (dots) { dots.classList.add('shake'); setTimeout(function() { dots.classList.remove('shake'); }, 450); }
+  }
 
   window._pin = function(v) {
     if (v === 'DEL') {
       entered = entered.slice(0, -1);
       var el = document.getElementById('pin-error');
       if (el) el.textContent = '';
-    } else if (entered.length < 4) {
+    } else if (entered.length < 4 && !busy) {
       entered += v;
       if (entered.length === 4) {
-        if (entered === PIN) {
-          try { sessionStorage.setItem('tv_auth', PIN); } catch(e) {}
-          var ps = document.getElementById('pin-screen');
-          var ma = document.getElementById('main-app');
-          if (ps) ps.style.display = 'none';
-          if (ma) ma.style.removeProperty('display');
-          if (typeof window._pinOk === 'function') window._pinOk();
-        } else {
-          var el = document.getElementById('pin-error');
-          if (el) el.textContent = 'PIN incorreto. Tente novamente.';
-          var dots = document.getElementById('pin-dots');
-          if (dots) { dots.classList.add('shake'); setTimeout(function() { dots.classList.remove('shake'); }, 450); }
+        busy = true;
+        var tentativa = entered;
+        verificarPin(tentativa).then(function(ok) {
+          if (ok) {
+            try { sessionStorage.setItem('tv_auth', '1'); } catch(e) {}
+            var ps = document.getElementById('pin-screen');
+            var ma = document.getElementById('main-app');
+            if (ps) ps.style.display = 'none';
+            if (ma) ma.style.removeProperty('display');
+            if (typeof window._pinOk === 'function') window._pinOk();
+          } else {
+            mostrarErro('PIN incorreto. Tente novamente.');
+            entered = '';
+          }
+        }).catch(function() {
+          mostrarErro('Sem conexão. Tente novamente.');
           entered = '';
-        }
+        }).then(function() {
+          busy = false;
+          atualizarPontos();
+        });
       }
     }
-    for (var i = 0; i < 4; i++) {
-      var d = document.getElementById('pd' + i);
-      if (d) { d.className = i < entered.length ? 'pin-dot filled' : 'pin-dot'; }
-    }
+    atualizarPontos();
   };
-
-  window._pinSetCode = function(code) { PIN = code; };
 
   // Teclado físico
   document.addEventListener('keydown', function(e) {
@@ -290,7 +320,7 @@ window.onerror = function(msg, src, line) {
 
   // Sessão já autenticada? — apenas esconde pin-screen (main-app ainda não está no DOM)
   try {
-    if (sessionStorage.getItem('tv_auth') === PIN) {
+    if (sessionStorage.getItem('tv_auth')) {
       var ps = document.getElementById('pin-screen');
       if (ps) ps.style.display = 'none';
       window._pinAlreadyOk = true;
@@ -383,7 +413,7 @@ if (!Promise.allSettled) {
 }
 
 /* ---------- PIN Gate — tratado pelo script inline acima do main-app ---------- */
-// _pin(), _pinOk, _pinAlreadyOk, _pinSetCode definidos no bloco inline
+// _pin(), _pinOk, _pinAlreadyOk definidos no bloco inline (PIN validado no banco via tv_verify_pin)
 
 /* ---------- Supabase (protegido: falha silenciosa se CDN indisponível) ---------- */
 const SUPABASE_URL = 'https://taicaxtjtikdajmhtsxc.supabase.co';
@@ -394,14 +424,6 @@ try {
   if (window.supabase) db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 } catch (e) {
   console.error('[Dashboard] Supabase indisponível:', e);
-}
-
-async function loadPinFromSupabase() {
-  if (!db) return;
-  try {
-    const { data } = await db.from('crm_config').select('value').eq('key', 'tv_dashboard_pin').single();
-    if (data && data.value && typeof window._pinSetCode === 'function') window._pinSetCode(data.value);
-  } catch (_) { /* usa fallback */ }
 }
 
 const SLIDE_DURATION = 25000;
@@ -1630,7 +1652,6 @@ function bootstrap() {
     if (ps) ps.style.display = 'none';
     if (ma) { ma.style.display = 'flex'; ma.style.flexDirection = 'column'; }
     init();
-    loadPinFromSupabase();
   }
 
   if (window._pinAlreadyOk) {
