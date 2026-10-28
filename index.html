@@ -522,6 +522,56 @@ async function loadMapScreen() {
   startMapPoll();
 }
 
+/* Rótulos fixos (placa · nome) ao lado de cada veículo. Posicionamento guloso em pixels:
+ * tenta direita, esquerda, cima, baixo e diagonais, depois afasta em anéis, e escolhe o primeiro
+ * lugar que não cobre outro rótulo nem outro ponto. Refeito a cada zoom. (ES5-friendly.) */
+let _labelLayer = null;
+function placeVehicleLabels(map, items) {
+  if (_labelLayer) { _labelLayer.remove(); _labelLayer = null; }
+  _labelLayer = L.layerGroup().addTo(map);
+  const H = 24, GAP = 12;
+  const pts = items.map(function (it) { return map.latLngToContainerPoint([it.lat, it.lng]); });
+  const placed = [];
+  const hit = function (a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; };
+  const dots = pts.map(function (p) { return { x: p.x - 9, y: p.y - 9, w: 18, h: 18 }; });
+
+  items.forEach(function (it, i) {
+    const p = pts[i];
+    const w = Math.round(it.text.length * 7.2) + 22;
+    let best = null;
+    for (let ring = 0; ring < 6 && !best; ring++) {
+      const d = GAP + ring * 34;
+      const cands = [
+        [d, -H / 2], [-d - w, -H / 2], [-w / 2, -d - H], [-w / 2, d],
+        [d, -d - H], [-d - w, -d - H], [d, d], [-d - w, d]
+      ];
+      for (let k = 0; k < cands.length; k++) {
+        const r = { x: p.x + cands[k][0], y: p.y + cands[k][1], w: w, h: H, ox: cands[k][0], oy: cands[k][1] };
+        let bad = false;
+        for (let j = 0; j < placed.length && !bad; j++) bad = hit(r, placed[j]);
+        for (let j = 0; j < dots.length && !bad; j++) bad = hit(r, dots[j]);
+        if (!bad) { best = r; break; }
+      }
+    }
+    if (!best) best = { x: p.x + GAP, y: p.y - H / 2, w: w, h: H, ox: GAP, oy: -H / 2 };
+    placed.push(best);
+
+    // linha ligando o rótulo ao ponto quando ele foi afastado
+    if (Math.abs(best.ox) > GAP + 40 || Math.abs(best.oy) > H + GAP) {
+      const cx = best.x + w / 2, cy = best.y + H / 2;
+      L.polyline([[it.lat, it.lng], map.containerPointToLatLng([cx, cy])],
+        { color: it.color, weight: 1.5, opacity: 0.8, interactive: false }).addTo(_labelLayer);
+    }
+    const html = '<div style="box-sizing:border-box;height:' + H + 'px;padding:0 10px;border-radius:6px;' +
+      'background:rgba(15,23,42,0.92);border:1px solid ' + it.color + ';color:#fff;font:700 12px/' + (H - 2) + 'px sans-serif;white-space:nowrap;' +
+      'box-shadow:0 2px 6px rgba(0,0,0,.5);">' + escapeHtml(it.text) + '</div>';
+    L.marker([it.lat, it.lng], {
+      icon: L.divIcon({ className: '', html: html, iconSize: [w, H], iconAnchor: [-best.ox, -best.oy] }),
+      interactive: false, keyboard: false, zIndexOffset: 1000
+    }).addTo(_labelLayer);
+  });
+}
+
 function afterMapRender() {
   const mapEl = document.getElementById('velo-map');
   if (!mapEl) return;
@@ -537,6 +587,7 @@ function afterMapRender() {
   }).addTo(_map);
 
   const bounds = [];
+  const labelItems = [];
   for (const v of vehicles) {
     const lat = parseFloat(v.latitude), lng = parseFloat(v.longitude);
     if (!isFinite(lat) || !isFinite(lng)) continue;
@@ -565,11 +616,16 @@ function afterMapRender() {
     L.marker([lat, lng], { icon })
      .bindTooltip(tip, { direction: 'top', opacity: 0.97, className: '' })
      .addTo(_map);
+
+    labelItems.push({ lat, lng, color, text: (v.vehicle_code || '—') + (v.description ? ' · ' + v.description : '') + (speed > 0 ? ' · ' + speed + ' km/h' : '') });
   }
 
-  if (bounds.length > 1) _map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+  if (bounds.length > 1) _map.fitBounds(bounds, { padding: [90, 90], maxZoom: 15 });
   else if (bounds.length === 1) _map.setView(bounds[0], 14);
   else _map.setView([-16.6869, -49.2648], 12);  // Goiânia fallback
+
+  _map.on('zoomend', function () { placeVehicleLabels(_map, labelItems); });
+  placeVehicleLabels(_map, labelItems);
 
   const now = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   const onCnt = vehicles.filter(v => v.connected === true || v.connected === 'Sim').length;
@@ -1265,7 +1321,6 @@ function renderAlertas() {
   const placar = data.placar || [];
   const metaRecompra = data.metaRecompra != null ? data.metaRecompra : 40;
   const posvendasPendentes = data.posvendasPendentes || 0;
-  const totalPosVenda = placar.filter(l => l.tipo === 1).reduce((s, d) => s + (Number(d.hoje) || 0), 0);
 
   // ── Redes sociais (faixa superior) ───────────────────────────────
   const socialContent = social.length === 0
@@ -1298,14 +1353,17 @@ function renderAlertas() {
        </div>`;
 
   // ── Placar (espelha o PosVendaWidget do CRM) ─────────────────────
-  const placarPainel = ({ icone, titulo, cor, tipo, meta, resumo }) => {
+  const placarPainel = ({ icone, titulo, cor, tipo, meta, resumo, metaTotal }) => {
     const dados = placar.filter(l => l.tipo === tipo)
       .sort((a, b) => b.hoje - a.hoje || String(a.atendente).localeCompare(String(b.atendente)));
     const total = dados.reduce((s, d) => s + (Number(d.hoje) || 0), 0);
-    const pct = meta > 0 ? Math.min(100, (total / meta) * 100) : 0;
-    const atingiu = meta > 0 && total >= meta;
+    const atingiu = metaTotal && meta > 0 && total >= meta;
+    const pct = metaTotal && meta > 0 ? Math.min(100, (total / meta) * 100) : 0;
     const corBarra = atingiu ? '#22c55e' : cor;
-    const maior = Math.max(...dados.map(d => d.hoje), 1);
+    // Pós-venda: a meta (pendentes) vira linha de referência; Recompra: meta da equipe vira barra de progresso.
+    const maior = Math.max(metaTotal ? 0 : meta, ...dados.map(d => d.hoje), 1);
+    const escala = maior * 1.12;
+    const badge = metaTotal ? `${total} / ${meta}${atingiu ? ' ✓' : ''}` : `${total} hoje`;
     return `
       <div class="card flex flex-col gap-3 p-5 min-h-0">
         <div class="flex items-start justify-between gap-3">
@@ -1314,29 +1372,35 @@ function renderAlertas() {
             <div class="text-xl font-bold text-white mt-1">${icone} ${escapeHtml(titulo)} — hoje</div>
           </div>
           <div class="text-right">
-            <div class="text-3xl font-black tabular-nums" style="color:${corBarra}">${total}<span class="text-xl text-slate-400"> / ${meta}${atingiu ? ' ✓' : ''}</span></div>
+            <div class="text-3xl font-black tabular-nums" style="color:${corBarra}">${badge}</div>
             <div class="text-[11px] text-slate-400">${resumo}</div>
           </div>
         </div>
-        <div class="h-4 rounded-full overflow-hidden" style="background:rgba(148,163,184,0.18);">
-          <div class="h-full rounded-full" style="width:${pct}%; background:${corBarra}; transition:width .6s;"></div>
-        </div>
+        ${metaTotal && meta > 0 ? `
+          <div class="h-3 shrink-0 rounded-full overflow-hidden" style="background:rgba(148,163,184,0.18);">
+            <div class="h-full rounded-full" style="width:${pct}%; background:${corBarra}; transition:width .6s;"></div>
+          </div>` : ''}
         ${dados.length === 0
           ? `<div class="flex-1 flex items-center justify-center text-sm text-slate-500">Nenhum atendimento registrado</div>`
-          : `<div class="flex flex-col gap-2 flex-1 min-h-0 justify-center">
-              ${dados.map(d => `
-                <div class="flex items-center gap-3">
-                  <div class="w-28 shrink-0 text-sm font-medium text-slate-200 truncate">${escapeHtml(String(d.atendente).split(' ')[0])}</div>
-                  <div class="flex-1 h-3 rounded-full overflow-hidden" style="background:rgba(148,163,184,0.12);">
-                    <div class="h-full rounded-full" style="width:${(d.hoje / maior) * 100}%; background:${corBarra}; min-width:${d.hoje > 0 ? 4 : 0}px; transition:width .6s;"></div>
-                  </div>
-                  <div class="w-8 text-right text-sm font-bold text-white tabular-nums">${d.hoje}</div>
-                </div>`).join('')}
+          : `<div class="relative pt-6 mt-auto">
+              <div class="relative flex items-end justify-around gap-4 px-2" style="height:clamp(110px, 30vh, 300px); border-bottom:1px solid rgba(148,163,184,0.3);">
+                ${!metaTotal && meta > 0 ? `
+                  <div class="absolute left-0 right-0 pointer-events-none" style="bottom:${(meta / escala) * 100}%; border-top:2px dashed #fbbf24;">
+                    <span class="absolute right-0 text-[11px] font-semibold px-1 rounded" style="top:-18px; color:#fbbf24; background:rgba(15,23,42,0.8);">${meta} pendentes</span>
+                  </div>` : ''}
+                ${dados.map(d => `
+                  <div class="flex-1 h-full flex flex-col items-center justify-end" style="max-width:110px;">
+                    <span class="text-lg font-bold text-white leading-none mb-1 tabular-nums">${d.hoje}</span>
+                    <div class="w-full rounded-t-lg" style="height:${(d.hoje / escala) * 100}%; min-height:${d.hoje > 0 ? 4 : 0}px; background:${corBarra}; transition:height .6s;"></div>
+                  </div>`).join('')}
+              </div>
+              <div class="flex justify-around gap-4 px-2 pt-2">
+                ${dados.map(d => `<span class="flex-1 text-center text-sm text-slate-300 truncate" style="max-width:110px;">${escapeHtml(String(d.atendente).split(' ')[0])}</span>`).join('')}
+              </div>
              </div>`}
       </div>`;
   };
 
-  const metaPosVenda = totalPosVenda + posvendasPendentes;
   const resumoPosVenda = posvendasPendentes > 0
     ? `Pendentes agora: <b class="text-white">${posvendasPendentes}</b>`
     : `<span class="text-emerald-300">Nenhum pendente</span>`;
@@ -1361,8 +1425,8 @@ function renderAlertas() {
 
       <!-- Placar do dia: Pós-venda + Recompra -->
       <div class="grid grid-cols-2 gap-6 flex-1 min-h-0">
-        ${placarPainel({ icone: '📞', titulo: 'Pós-venda', cor: '#38bdf8', tipo: 1, meta: metaPosVenda, resumo: resumoPosVenda })}
-        ${placarPainel({ icone: '📤', titulo: 'Recompra', cor: '#f87171', tipo: 2, meta: metaRecompra, resumo: `Meta da equipe: <b class="text-white">${metaRecompra}</b> no dia` })}
+        ${placarPainel({ icone: '📞', titulo: 'Pós-venda', cor: '#38bdf8', tipo: 1, meta: posvendasPendentes, resumo: resumoPosVenda })}
+        ${placarPainel({ icone: '📤', titulo: 'Recompra', cor: '#f87171', tipo: 2, meta: metaRecompra, metaTotal: true, resumo: `Meta da equipe: <b class="text-white">${metaRecompra}</b> no dia` })}
       </div>
 
     </div>
