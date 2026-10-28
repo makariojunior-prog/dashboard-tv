@@ -180,8 +180,6 @@
 
   /* Leaflet dark overrides */
   .leaflet-container { background: #0f172a; }
-  /* Tiles do OpenStreetMap (claros) escurecidos para combinar com o painel */
-  .osm-dark { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9) saturate(0.6); }
   .leaflet-tile-pane { filter: brightness(0.85) saturate(0.9); }
   .leaflet-popup-content-wrapper, .leaflet-popup-tip {
     background: #1e293b; color: #f1f5f9; border: 1px solid rgba(255,255,255,0.08); border-radius: 0.75rem;
@@ -560,11 +558,11 @@ function placeVehicleLabels(map, items) {
     if (Math.abs(best.ox) > GAP + 40 || Math.abs(best.oy) > H + GAP) {
       const cx = best.x + w / 2, cy = best.y + H / 2;
       L.polyline([[it.lat, it.lng], map.containerPointToLatLng([cx, cy])],
-        { color: it.color, weight: 1.5, opacity: 0.8, interactive: false }).addTo(_labelLayer);
+        { color: it.color, weight: 2, opacity: 0.9, interactive: false }).addTo(_labelLayer);
     }
     const html = '<div style="box-sizing:border-box;height:' + H + 'px;padding:0 10px;border-radius:6px;' +
-      'background:rgba(15,23,42,0.92);border:1px solid ' + it.color + ';color:#fff;font:700 12px/' + (H - 2) + 'px sans-serif;white-space:nowrap;' +
-      'box-shadow:0 2px 6px rgba(0,0,0,.5);">' + escapeHtml(it.text) + '</div>';
+      'background:rgba(255,255,255,0.96);border:2px solid ' + it.color + ';color:#0f172a;font:700 12px/' + (H - 2) + 'px sans-serif;white-space:nowrap;' +
+      'box-shadow:0 2px 6px rgba(0,0,0,.35);">' + escapeHtml(it.text) + '</div>';
     L.marker([it.lat, it.lng], {
       icon: L.divIcon({ className: '', html: html, iconSize: [w, H], iconAnchor: [-best.ox, -best.oy] }),
       interactive: false, keyboard: false, zIndexOffset: 1000
@@ -583,7 +581,7 @@ function afterMapRender() {
   _map = L.map('velo-map', { zoomControl: true, scrollWheelZoom: false });
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ',
-    subdomains: 'abc', maxZoom: 19, className: 'osm-dark'
+    subdomains: 'abc', maxZoom: 19
   }).addTo(_map);
 
   const bounds = [];
