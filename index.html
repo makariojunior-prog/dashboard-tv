@@ -357,6 +357,13 @@ window.onerror = function(msg, src, line) {
     z-index: 10000;
   }
   .pin-key:active, .pin-key:hover { background: #334155; border-color: #f97316; color: #f97316; }
+  /* Barra de notícias: a faixa tem o conteúdo duplicado e anda metade. */
+  @keyframes noticias-rolar { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  .noticias-faixa { animation: noticias-rolar var(--noticias-duracao, 90s) linear infinite; }
+  .noticias-item { display: inline-flex; align-items: center; gap: 0.75rem; padding: 0 2rem; font-size: 1.5rem; color: #f1f5f9; }
+  .noticias-rotulo { font-weight: 800; }
+  .noticias-atencao-rotulo { background: #ef4444; color: #fff; font-weight: 800; border-radius: 0.375rem; padding: 0.1rem 0.6rem; }
+  .noticias-atencao-titulo { font-weight: 800; color: #fecaca; }
 </style>
 
 <!-- Root container -->
@@ -397,6 +404,11 @@ window.onerror = function(msg, src, line) {
   <main class="flex-1 overflow-hidden relative" style="flex:1 1 0%;overflow:hidden;position:relative;min-height:0;">
     <div id="slide-content" class="absolute inset-0 px-10 py-6 flex flex-col" style="position:absolute;top:0;right:0;bottom:0;left:0;padding:1.5rem 2.5rem;display:flex;flex-direction:column;"></div>
   </main>
+
+  <!-- BARRA DE NOTÍCIAS do Comercial (RPC tv_noticias; some quando não há notícia publicada) -->
+  <div id="noticias-bar" style="display:none;flex-shrink:0;height:3.25rem;background:#0f172a;border-top:1px solid rgba(71,85,105,0.5);overflow:hidden;position:relative;">
+    <div id="noticias-faixa" class="noticias-faixa" style="position:absolute;top:0;bottom:0;left:0;display:flex;align-items:center;width:max-content;white-space:nowrap;"></div>
+  </div>
 
   <!-- FOOTER (dots) -->
   <footer class="flex items-center justify-center gap-3 py-5 border-t border-slate-700/50 bg-slate-900/40" style="flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:0.75rem;padding:1.25rem;border-top:1px solid rgba(71,85,105,0.5);background:rgba(15,23,42,0.4);">
@@ -1609,6 +1621,45 @@ function startClock() {
   state.clockTimer = setInterval(updateClock, 1000);
 }
 
+/* ---------- Barra de notícias do Comercial ---------- */
+const NOTICIA_ROTULOS = {
+  negocio: ['Negócios', '#34d399'], visita: ['Visitas', '#fbbf24'], problema: ['Atenção', '#f87171'],
+  logistica: ['Logística', '#38bdf8'], varejo: ['Varejo', '#fb923c'], demanda: ['Demanda', '#c084fc'],
+  destaque: ['Destaque', '#fde047']
+};
+
+function escHtml(t) {
+  return String(t == null ? '' : t).replace(/[&<>"']/g, function(c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+async function fetchNoticias() {
+  const bar = document.getElementById('noticias-bar');
+  const faixa = document.getElementById('noticias-faixa');
+  if (!db || !bar || !faixa) return;
+  try {
+    const res = await db.rpc('tv_noticias');
+    const itens = Array.isArray(res.data) ? res.data : [];
+    if (res.error || itens.length === 0) { bar.style.display = 'none'; return; }
+    const um = itens.map(function(n) {
+      const r = NOTICIA_ROTULOS[n.categoria] || NOTICIA_ROTULOS.destaque;
+      const atencao = n.categoria === 'problema';
+      const rotulo = atencao
+        ? '<span class="noticias-atencao-rotulo">⚠ ' + r[0] + '</span>'
+        : '<span class="noticias-rotulo" style="color:' + r[1] + '">' + r[0] + '</span>';
+      const titulo = '<span' + (atencao ? ' class="noticias-atencao-titulo"' : '') + '>' + escHtml(n.titulo) + '</span>';
+      return '<span class="noticias-item">' + rotulo + titulo + '<span style="color:#64748b">·</span></span>';
+    }).join('');
+    // ~9s por notícia: a TV é lida de longe, então anda mais devagar que nos apps
+    faixa.style.setProperty('--noticias-duracao', Math.max(45, itens.length * 9) + 's');
+    faixa.innerHTML = um + um;
+    bar.style.display = 'block';
+  } catch (e) {
+    console.error('[tv_noticias] fetch error:', e);
+  }
+}
+
 /* ---------- Init ---------- */
 function init() {
   document.getElementById('screen-total').textContent = SCREENS.length;
@@ -1616,6 +1667,8 @@ function init() {
   renderCurrentSlide();   // show initial loading state
   fetchAll();
   setInterval(fetchAll, REFRESH_INTERVAL);
+  fetchNoticias();
+  setInterval(fetchNoticias, REFRESH_INTERVAL);
   startRotation();
 
   document.addEventListener('keydown', (e) => {
