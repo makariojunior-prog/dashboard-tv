@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 **Comercial TV** (`tv.cantinaemcasa.com`) — painel em TV do Comercial da Cantina em Casa / Lumar.
-Página estática única (`index.html`, ~70 KB), servida pelo GitHub Pages (`CNAME`). Sem build.
+Página estática única (`index.html`, ~70 KB), servida pelo Vercel (projeto `cantina-tv`, deploy automático da `main`; o DNS fica na Hostinger). Sem build.
 Acesso por **PIN**, fora do SSO do Portal (de propósito). Português (BR).
 
 - **Repositório público**: nunca coloque senha, token ou chave de serviço no código. Só a chave
